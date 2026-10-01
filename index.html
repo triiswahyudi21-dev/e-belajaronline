@@ -81,8 +81,8 @@
     import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
     import { 
       BookOpen, Users, LogIn, FileText, PlusCircle, CheckCircle, 
-      Award, ArrowLeft, LogOut, List, Trash2, Filter, Upload, Lock, UserPlus,
-      Clock, AlertTriangle, RefreshCw, Radio, Download, LayoutDashboard, StopCircle, User, Edit, Image, Code, FileSpreadsheet, Play, Power, AlertCircle, X, Home, BookMarked, Gamepad2, ExternalLink
+      Award, ArrowLeft, LogOut, List, Trash2, Filter, Lock, UserPlus,
+      Clock, AlertTriangle, RefreshCw, Radio, Download, LayoutDashboard, StopCircle, User, Edit, Image, Code, FileSpreadsheet, Play, Power, AlertCircle, X, Home, BookMarked, Gamepad2, ExternalLink, Save
     } from 'lucide-react';
 
     const MAPEL_LIST = [
@@ -191,6 +191,7 @@
       const [students, setStudents] = useState([]);
       const [materials, setMaterials] = useState([]);
       const [questions, setQuestions] = useState([]);
+      const [scores, setScores] = useState([]);
       
       const [selectedMapel, setSelectedMapel] = useState('IPA');
       const [selectedKelas, setSelectedKelas] = useState('7');
@@ -204,7 +205,7 @@
       const [isTabFocused, setIsTabFocused] = useState(true);
 
       const [userAnswers, setUserAnswers] = useState({});
-      const [quizResult, setQuizResult] = useState(null);
+      const [submittedMessage, setSubmittedMessage] = useState(false);
 
       useEffect(() => {
         signInAnonymously(auth).catch(() => {});
@@ -227,10 +228,17 @@
           setQuestions(list.length > 0 ? list : defaultQuestions);
         });
 
+        const unsubScores = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'scores'), (snap) => {
+          const list = [];
+          snap.docs.forEach(doc => list.push(doc.data()));
+          setScores(list);
+        });
+
         return () => {
           unsubStudents();
           unsubMaterials();
           unsubQuestions();
+          unsubScores();
         };
       }, []);
 
@@ -313,11 +321,19 @@
         }
       };
 
+      const handleFinishReading = async () => {
+        setIsReading(false);
+        await updatePresence(timer, 'Selesai');
+        setActiveMaterial(null);
+        setSubmittedMessage(false);
+        setUserAnswers({});
+      };
+
       const startReading = (mat) => {
         const matWithStartTime = { ...mat, startedAt: Date.now() };
         setActiveMaterial(matWithStartTime);
         setUserAnswers({});
-        setQuizResult(null);
+        setSubmittedMessage(false);
         const durationSecs = (mat.durationMinutes || 15) * 60;
         setTimer(durationSecs);
         setIsReading(true);
@@ -328,41 +344,67 @@
         const currentQuestions = questions.filter(q => q.materialId === activeMaterial.id);
         if (currentQuestions.length === 0) return;
 
-        let correctCount = 0;
-        currentQuestions.forEach(q => {
-          const ans = (userAnswers[q.id] || '').trim().toLowerCase();
-          const target = (q.correctAnswer || '').trim().toLowerCase();
-          if (ans === target) {
-            correctCount++;
-          }
-        });
+        const hasIsian = currentQuestions.some(q => q.type === 'isian');
 
-        const calculatedScore = Math.round((correctCount / currentQuestions.length) * 100);
-        
-        const scoreData = {
-          id: `sc_${Date.now()}_${studentSession.id}`,
-          studentId: studentSession.id,
-          studentName: studentSession.name,
-          kelas: studentSession.kelas,
-          subKelas: studentSession.subKelas,
-          materialId: activeMaterial.id,
-          materialTitle: activeMaterial.title,
-          mapel: activeMaterial.mapel || 'UMUM',
-          score: calculatedScore,
-          totalQuestions: currentQuestions.length,
-          correctAnswers: correctCount,
-          submittedAt: Date.now()
-        };
+        let scoreData = {};
+        const scoreId = `${studentSession.id}_${activeMaterial.id}`;
+
+        if (!hasIsian) {
+          let correctCount = 0;
+          currentQuestions.forEach(q => {
+            const ans = (userAnswers[q.id] || '').trim().toLowerCase();
+            const target = (q.correctAnswer || '').trim().toLowerCase();
+            if (ans === target) {
+              correctCount++;
+            }
+          });
+
+          const calculatedScore = Math.round((correctCount / currentQuestions.length) * 100);
+
+          scoreData = {
+            id: scoreId,
+            studentId: studentSession.id,
+            studentName: studentSession.name,
+            kelas: studentSession.kelas,
+            subKelas: studentSession.subKelas,
+            materialId: activeMaterial.id,
+            materialTitle: activeMaterial.title,
+            mapel: activeMaterial.mapel || 'UMUM',
+            score: calculatedScore,
+            totalQuestions: currentQuestions.length,
+            correctAnswers: correctCount,
+            userAnswers: userAnswers,
+            statusGrade: 'graded',
+            submittedAt: Date.now()
+          };
+        } else {
+          scoreData = {
+            id: scoreId,
+            studentId: studentSession.id,
+            studentName: studentSession.name,
+            kelas: studentSession.kelas,
+            subKelas: studentSession.subKelas,
+            materialId: activeMaterial.id,
+            materialTitle: activeMaterial.title,
+            mapel: activeMaterial.mapel || 'UMUM',
+            score: null,
+            totalQuestions: currentQuestions.length,
+            userAnswers: userAnswers,
+            statusGrade: 'pending',
+            submittedAt: Date.now()
+          };
+        }
 
         try {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'scores', scoreData.id);
-          await setDoc(docRef, scoreData);
+          await setDoc(docRef, scoreData, { merge: true });
         } catch (e) {}
 
         const localScores = JSON.parse(localStorage.getItem('elearning_scores_v4') || '[]');
-        localStorage.setItem('elearning_scores_v4', JSON.stringify([scoreData, ...localScores]));
+        const filteredLocal = localScores.filter(s => s.id !== scoreData.id);
+        localStorage.setItem('elearning_scores_v4', JSON.stringify([scoreData, ...filteredLocal]));
 
-        setQuizResult(scoreData);
+        setSubmittedMessage(true);
       };
 
       if (!studentSession) {
@@ -394,10 +436,10 @@
                   <div>
                     <label className="block text-xs font-semibold text-slate-400 mb-1">Rombel</label>
                     <select value={selectedSubKelas} onChange={(e) => setSelectedSubKelas(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white">
-                      <option value="A">Rombel A</option>
-                      <option value="B">Rombel B</option>
-                      <option value="C">Rombel C</option>
-                      <option value="D">Rombel D</option>
+                      <option value="A">A</option>
+                      <option value="B">B</option>
+                      <option value="C">C</option>
+                      <option value="D">D</option>
                     </select>
                   </div>
                 </div>
@@ -438,12 +480,16 @@
         ? questions.filter(q => q.materialId === activeMaterial.id) 
         : [];
 
+      const activeMaterialScore = activeMaterial 
+        ? scores.find(s => s.studentId === studentSession.id && s.materialId === activeMaterial.id)
+        : null;
+
       return (
         <div className="min-h-screen bg-slate-950 text-slate-100 p-4 max-w-5xl mx-auto">
           <header className="flex justify-between items-center bg-slate-900 border border-slate-800 p-4 rounded-2xl mb-6">
             <div>
               <h2 className="font-bold text-white text-sm">{studentSession.name}</h2>
-              <p className="text-slate-400 text-xs">Kelas {studentSession.kelas} - Rombel {studentSession.subKelas}</p>
+              <p className="text-slate-400 text-xs">Kelas {studentSession.kelas} - {studentSession.subKelas}</p>
             </div>
             <button onClick={() => setStudentSession(null)} className="text-red-400 hover:text-red-300 text-xs font-semibold flex items-center gap-1 bg-red-500/10 px-3 py-2 rounded-xl border border-red-500/20">
               <LogOut className="w-3.5 h-3.5"/> Keluar
@@ -470,9 +516,17 @@
 
           {activeMaterial ? (
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6">
-              <button onClick={() => { setIsReading(false); setActiveMaterial(null); setQuizResult(null); setUserAnswers({}); updatePresence(0, 'Belum Aktif'); }} className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
-                <ArrowLeft className="w-4 h-4"/> Kembali ke Daftar Materi
-              </button>
+              <div className="flex justify-between items-center">
+                <button onClick={handleFinishReading} className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
+                  <ArrowLeft className="w-4 h-4"/> Kembali ke Daftar Materi
+                </button>
+                <button 
+                  onClick={handleFinishReading}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 transition-all"
+                >
+                  <CheckCircle className="w-4 h-4" /> Selesai Belajar
+                </button>
+              </div>
 
               <div className="flex justify-between items-center border-b border-slate-800 pb-4">
                 <div>
@@ -485,6 +539,28 @@
                   {Math.floor(timer / 60)}:{(timer % 60).toString().padStart(2, '0')}
                 </div>
               </div>
+
+              {/* TAMPILAN NILAI GURU PADA BAGIAN MATERI SISWA */}
+              {activeMaterialScore && (
+                <div className="bg-blue-950/60 border border-blue-500/30 rounded-2xl p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Award className="w-8 h-8 text-amber-400" />
+                    <div>
+                      <h4 className="text-xs font-bold text-white">Status Nilai / Hasil Latihan</h4>
+                      {activeMaterialScore.score !== null && activeMaterialScore.score !== undefined ? (
+                        <p className="text-xs text-slate-300 mt-0.5">Nilai Anda: <strong className="text-amber-400 text-sm">{activeMaterialScore.score} / 100</strong></p>
+                      ) : (
+                        <p className="text-xs text-amber-400 mt-0.5 font-semibold">Jawaban telah terkirim. Menunggu penilaian manual dari guru direkap nilai.</p>
+                      )}
+                    </div>
+                  </div>
+                  {activeMaterialScore.score !== null && activeMaterialScore.score !== undefined && (
+                    <span className="bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 px-3 py-1 rounded-xl text-xs font-bold">
+                      Sudah Dinilai
+                    </span>
+                  )}
+                </div>
+              )}
 
               {activeMaterial.imageUrl && (
                 <div className="flex justify-center bg-slate-950/50 p-2 rounded-xl border border-slate-800">
@@ -542,23 +618,22 @@
                 </div>
               )}
 
-              {/* LATIHAN SOAL LANGSUNG DI BAWAH MATERI */}
+              {/* SOAL EVALUASI LANGSUNG DI BAWAH MATERI */}
               <div className="pt-6 border-t border-slate-800 space-y-6">
                 <div className="flex items-center gap-2">
                   <List className="w-5 h-5 text-emerald-400" />
-                  <h2 className="text-base font-bold text-white">Latihan Soal & Evaluasi</h2>
+                  <h2 className="text-base font-bold text-white">Soal evaluasi</h2>
                 </div>
 
-                {quizResult ? (
+                {submittedMessage ? (
                   <div className="text-center p-8 bg-slate-950 border border-slate-800 rounded-2xl space-y-4">
-                    <Award className="w-16 h-16 text-amber-400 mx-auto" />
-                    <h3 className="text-xl font-bold text-white">Hasil Latihan Soal</h3>
-                    <div className="text-4xl font-extrabold text-blue-400">{quizResult.score} / 100</div>
-                    <p className="text-xs text-slate-400">
-                      Jawaban Benar: {quizResult.correctAnswers} dari {quizResult.totalQuestions} Soal
+                    <Award className="w-16 h-16 text-emerald-400 mx-auto animate-bounce" />
+                    <h3 className="text-xl font-bold text-white">Jawaban Berhasil Terkirim!</h3>
+                    <p className="text-xs text-slate-400 max-w-md mx-auto">
+                      Jawaban Anda telah tersimpan di rekap nilai. Jika terdapat soal isian, nilai akan diinput oleh guru secara manual. Anda dapat mengecek pembaruan nilai secara berkala pada halaman materi ini.
                     </p>
                     <button 
-                      onClick={() => { setIsReading(false); setActiveMaterial(null); setQuizResult(null); setUserAnswers({}); updatePresence(0, 'Belum Aktif'); }}
+                      onClick={handleFinishReading}
                       className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-2.5 rounded-xl text-xs transition-all mt-4"
                     >
                       Selesai & Kembali ke Daftar Materi
@@ -632,11 +707,20 @@
                       </div>
                     ) : (
                       <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 rounded-xl transition-all text-xs shadow-lg shadow-emerald-600/30">
-                        Kirim Jawaban & Lihat Nilai
+                        Kirim Jawaban
                       </button>
                     )}
                   </form>
                 )}
+              </div>
+
+              <div className="pt-4 border-t border-slate-800 flex justify-end">
+                <button 
+                  onClick={handleFinishReading}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-6 py-3 rounded-xl flex items-center gap-2 shadow-lg shadow-emerald-600/30 transition-all"
+                >
+                  <CheckCircle className="w-4 h-4" /> Sesi Selesai & Keluar Materi
+                </button>
               </div>
             </div>
           ) : (
@@ -648,6 +732,8 @@
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {filteredMaterialsForStudent.map(m => {
                   const qCount = questions.filter(q => q.materialId === m.id).length;
+                  const myScore = scores.find(s => s.studentId === studentSession.id && s.materialId === m.id);
+
                   return (
                     <div key={m.id} className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex flex-col justify-between">
                       <div>
@@ -671,9 +757,9 @@
                           <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-lg font-bold">
                             {m.mapel} • Kelas {m.kelas}
                           </span>
-                          {m.gameUrl && (
-                            <span className="text-[10px] bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2 py-0.5 rounded-lg font-bold flex items-center gap-1">
-                              <Gamepad2 className="w-3 h-3" /> Ada Game
+                          {myScore && myScore.score !== null && myScore.score !== undefined && (
+                            <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-lg font-bold flex items-center gap-1">
+                              Nilai: {myScore.score}
                             </span>
                           )}
                         </div>
@@ -809,6 +895,8 @@
 
       const [rekapFilterClass, setRekapFilterClass] = useState('semua');
       const [rekapFilterSubClass, setRekapFilterSubClass] = useState('semua');
+
+      const [manualScoresInput, setManualScoresInput] = useState({});
 
       useEffect(() => {
         if (editingQuestion) {
@@ -1057,7 +1145,7 @@
           targetQ.optionD = formData.get('optionD') || '';
           targetQ.correctAnswer = formData.get('correctAnswer') || 'A';
         } else {
-          targetQ.correctAnswer = formData.get('correctAnswerIsian') || '';
+          targetQ.correctAnswer = '';
         }
 
         if (isEditing) {
@@ -1109,8 +1197,7 @@
               if (matched) {
                 answer = matched[1].toUpperCase();
               } else {
-                const textAns = line.replace(/^(kunci|jawaban|ans|key)\s*:\s*/i, '').trim();
-                if (textAns) answer = textAns;
+                answer = '';
               }
             } else {
               questionParts.push(line);
@@ -1132,7 +1219,7 @@
             optionB: optB || 'Pilihan B',
             optionC: optC || 'Pilihan C',
             optionD: optD || 'Pilihan D',
-            correctAnswer: isPG ? answer : (answer || ''),
+            correctAnswer: isPG ? answer : '',
             createdAt: baseTime + idx
           };
 
@@ -1180,7 +1267,31 @@
         showNotification("Data nilai berhasil dihapus.");
       };
 
-      // FUNGSI HAPUS NILAI KELAS YANG SUDAH DIPERBAIKI (HAPUS SEKALIGUS SERENTAK)
+      const handleSaveManualScore = async (scoreItem) => {
+        const val = manualScoresInput[scoreItem.id];
+        if (val === undefined || val === '') {
+          showNotification("Masukkan angka nilai terlebih dahulu!");
+          return;
+        }
+
+        const numScore = Math.min(100, Math.max(0, parseInt(val) || 0));
+
+        const updatedScoreObj = {
+          ...scoreItem,
+          score: numScore,
+          statusGrade: 'graded',
+          gradedAt: Date.now()
+        };
+
+        setScores(prev => prev.map(s => s.id === scoreItem.id ? updatedScoreObj : s));
+
+        try {
+          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'scores', scoreItem.id);
+          await setDoc(docRef, updatedScoreObj, { merge: true });
+          showNotification(`Nilai untuk ${scoreItem.studentName} berhasil disimpan: ${numScore}`);
+        } catch (e) {}
+      };
+
       const handleDeleteClassScores = async () => {
         if (rekapFilterClass === 'semua') {
           showNotification("Pilih kelas tertentu terlebih dahulu untuk menghapus nilai kelas!");
@@ -1217,7 +1328,6 @@
           await Promise.all(deletePromises);
           showNotification(`Seluruh data nilai Kelas ${rekapFilterClass} (${idsToDelete.length} data) berhasil dihapus sekaligus.`);
         } catch (e) {
-          console.error(e);
           showNotification("Gagal menghapus beberapa data dari cloud, namun data lokal telah diperbarui.");
         }
       };
@@ -1301,7 +1411,7 @@
 
         const targetLabel = filterSubClassGuru === 'semua'
           ? `Kelas ${filterClassGuru}`
-          : `Kelas ${filterClassGuru} Rombel ${filterSubClassGuru}`;
+          : `Kelas ${filterClassGuru} ${filterSubClassGuru}`;
 
         if (!window.confirm(`Apakah Anda yakin ingin menghapus SELURUH data pemantauan ${targetLabel}?`)) return;
 
@@ -1313,7 +1423,7 @@
         });
 
         if (targetPresences.length === 0) {
-          showNotification("Tidak ada data pemantauan yang sesuai dengan filter kelas/rombel untuk dihapus.");
+          showNotification("Tidak ada data pemantauan yang sesuai dengan filter kelas untuk dihapus.");
           return;
         }
 
@@ -1348,7 +1458,7 @@
           return;
         }
 
-        if (!window.confirm(`Apakah Anda yakin ingin menghapus seluruh data pemantauan yang belum aktif (${inactivePresences.length} data)?`)) return;
+        if (!window.confirm(`Apakah Anda yakin ingin menghapus seluruh data pemantauan yang belum aktif / selesai (${inactivePresences.length} data)?`)) return;
 
         const idsToDelete = inactivePresences.map(p => p.id);
         setLiveMonitorData(prev => {
@@ -1365,7 +1475,7 @@
           await Promise.all(deletePromises);
         } catch (e) {}
 
-        showNotification(`${idsToDelete.length} data pemantauan belum aktif berhasil dihapus.`);
+        showNotification(`${idsToDelete.length} data pemantauan berhasil dihapus.`);
       };
 
       const exportToExcel = (filteredScores) => {
@@ -1380,12 +1490,12 @@
           'Kelas': s.kelas ? `Kelas ${s.kelas}-${s.subKelas}` : '-',
           'Mata Pelajaran': s.mapel || '-',
           'Judul Materi': s.materialTitle || '-',
-          'Nilai Akhir': s.score ?? 0,
-          'Keterangan': (s.score ?? 0) >= 70 ? 'Lulus' : 'Remidial'
+          'Nilai Akhir': s.score ?? 'Belum Dinilai',
+          'Keterangan': s.score !== null && s.score !== undefined ? (s.score >= 70 ? 'Lulus' : 'Remidial') : 'Perlu Koreksi Manual'
         }));
 
         const worksheet = XLSX.utils.json_to_sheet(excelData);
-        worksheet['!cols'] = [{ wch: 6 }, { wch: 28 }, { wch: 12 }, { wch: 18 }, { wch: 35 }, { wch: 12 }, { wch: 12 }];
+        worksheet['!cols'] = [{ wch: 6 }, { wch: 28 }, { wch: 12 }, { wch: 18 }, { wch: 35 }, { wch: 15 }, { wch: 18 }];
 
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, 'Rekap Nilai');
@@ -1486,7 +1596,7 @@
                     onClick={handleDeleteInactiveMonitoring} 
                     className="text-amber-400 hover:text-white flex items-center gap-1.5 text-xs font-semibold bg-amber-500/10 hover:bg-amber-600 border border-amber-500/20 px-3 py-2 rounded-xl transition-all"
                   >
-                    <Trash2 className="w-4 h-4"/> Hapus Belum Aktif
+                    <Trash2 className="w-4 h-4"/> Hapus Selesai/Belum Aktif
                   </button>
                   <button 
                     onClick={handleDeleteClassMonitoring} 
@@ -1523,7 +1633,7 @@
                       onClick={() => setFilterSubClassGuru(r)} 
                       className={`px-2.5 py-1.5 rounded-lg capitalize transition-all ${filterSubClassGuru === r ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
                     >
-                      {r === 'semua' ? 'Semua' : `Rombel ${r}`}
+                      {r === 'semua' ? 'Semua' : r}
                     </button>
                   ))}
                 </div>
@@ -1531,7 +1641,7 @@
 
               {presenceList.length === 0 ? (
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 italic text-xs">
-                  Belum ada aktivitas membaca/belajar yang terpantau pada mapel {appSession.mapel} {filterClassGuru !== 'semua' ? `Kelas ${filterClassGuru}` : ''} {filterSubClassGuru !== 'semua' ? `Rombel ${filterSubClassGuru}` : ''}.
+                  Belum ada aktivitas membaca/belajar yang terpantau pada mapel {appSession.mapel} {filterClassGuru !== 'semua' ? `Kelas ${filterClassGuru}` : ''} {filterSubClassGuru !== 'semua' ? `${filterSubClassGuru}` : ''}.
                 </div>
               ) : (
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
@@ -1552,7 +1662,9 @@
                           let badgeStyle = "bg-emerald-500/20 text-emerald-400 border-emerald-500/30";
                           if (p.status === 'Membuka Tab Lain') {
                             badgeStyle = "bg-amber-500/20 text-amber-400 border-amber-500/30";
-                          } else if (p.status === 'Selesai' || p.status === 'Belum Aktif') {
+                          } else if (p.status === 'Selesai') {
+                            badgeStyle = "bg-blue-500/20 text-blue-400 border-blue-500/30";
+                          } else if (p.status === 'Belum Aktif') {
                             badgeStyle = "bg-red-500/20 text-red-400 border-red-500/30";
                           }
 
@@ -1645,11 +1757,11 @@
                   <div>
                     <label className="block text-xs font-semibold text-slate-400 mb-1">Target Rombel</label>
                     <select name="subKelasTarget" defaultValue={isEdit ? editingMaterial.subKelasTarget : 'semua'} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white">
-                      <option value="semua">Semua Rombel (A, B, C, D)</option>
-                      <option value="A">Rombel A</option>
-                      <option value="B">Rombel B</option>
-                      <option value="C">Rombel C</option>
-                      <option value="D">Rombel D</option>
+                      <option value="semua">Semua (A, B, C, D)</option>
+                      <option value="A">A</option>
+                      <option value="B">B</option>
+                      <option value="C">C</option>
+                      <option value="D">D</option>
                     </select>
                   </div>
 
@@ -1765,11 +1877,11 @@
                           className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2 text-xs text-white focus:border-blue-500 outline-none"
                         >
                           <option value="pg">Pilihan Ganda</option>
-                          <option value="isian">Isian Singkat</option>
+                          <option value="isian">Isian Singkat (Penilaian Manual Guru)</option>
                         </select>
                       </div>
 
-                      {formQuestionType === 'pg' ? (
+                      {formQuestionType === 'pg' && (
                         <div>
                           <label className="block text-[11px] text-slate-400 mb-1">Kunci Jawaban PG</label>
                           <select 
@@ -1782,18 +1894,6 @@
                             <option value="C">C</option>
                             <option value="D">D</option>
                           </select>
-                        </div>
-                      ) : (
-                        <div>
-                          <label className="block text-[11px] text-slate-400 mb-1">Kunci Jawaban Isian</label>
-                          <input 
-                            type="text" 
-                            name="correctAnswerIsian" 
-                            defaultValue={editingQuestion ? editingQuestion.correctAnswer : ''} 
-                            required
-                            placeholder="Tulis Kunci Jawaban..." 
-                            className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2 text-xs text-white focus:border-blue-500 outline-none" 
-                          />
                         </div>
                       )}
                     </div>
@@ -1843,13 +1943,13 @@
                   <form onSubmit={handleBatchPasteQuestions} className="space-y-3 bg-slate-950 p-4 rounded-xl border border-slate-800 flex flex-col justify-between">
                     <div>
                       <h3 className="font-bold text-white text-xs flex items-center gap-1.5"><FileSpreadsheet className="w-4 h-4 text-blue-400"/> Upload Soal Massal (Copy-Paste)</h3>
-                      <p className="text-[10px] text-slate-400 mt-1 mb-2">Pisahkan antar soal dengan 1 baris kosong. Kunci jawaban ditulis di baris akhir soal (`Kunci: A`).</p>
+                      <p className="text-[10px] text-slate-400 mt-1 mb-2">Pisahkan antar soal dengan 1 baris kosong. Tanpa pilihan ganda otomatis dibaca soal isian.</p>
                       
                       <textarea 
                         rows="8" 
                         value={batchQuestionsText}
                         onChange={(e) => setBatchQuestionsText(e.target.value)}
-                        placeholder={`Contoh Format:\n\n1. Berapakah 2 + 2?\nA. 3\nB. 4\nC. 5\nD. 6\nKunci: B\n\n2. Ibu kota Indonesia adalah...\nA. Jakarta\nB. Surabaya\nC. Bandung\nD. Medan\nKunci: A`}
+                        placeholder={`Contoh Format PG:\n\n1. Berapakah 2 + 2?\nA. 3\nB. 4\nC. 5\nD. 6\nKunci: B\n\nContoh Format Isian:\n\n2. Sebutkan ibu kota negara Indonesia!`}
                         className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-xs text-white font-mono outline-none focus:border-blue-500"
                       ></textarea>
                     </div>
@@ -1935,8 +2035,8 @@
                           })}
                         </div>
                       ) : (
-                        <div className="mt-2 p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-400 font-semibold">
-                          Kunci Jawaban Isian: <span className="text-white font-bold">{q.correctAnswer}</span>
+                        <div className="mt-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs text-amber-400 font-semibold">
+                          Tipe: Soal Isian (Siswa menjawab isian singkat tanpa kunci otomatis. Diisi & dinilai manual oleh guru direkap).
                         </div>
                       )}
                     </div>
@@ -1976,10 +2076,10 @@
                       <div>
                         <label className="block text-xs font-semibold text-slate-400 mb-1">Rombel</label>
                         <select value={studentInputSubKelas} onChange={(e) => setStudentInputSubKelas(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white">
-                          <option value="A">Rombel A</option>
-                          <option value="B">Rombel B</option>
-                          <option value="C">Rombel C</option>
-                          <option value="D">Rombel D</option>
+                          <option value="A">A</option>
+                          <option value="B">B</option>
+                          <option value="C">C</option>
+                          <option value="D">D</option>
                         </select>
                       </div>
                     </div>
@@ -2011,10 +2111,10 @@
                         <option value="9">Kelas 9</option>
                       </select>
                       <select value={manageStudentSubClass} onChange={(e) => setManageStudentSubClass(e.target.value)} className="bg-slate-950 border border-slate-800 rounded-lg p-1.5 text-xs text-white">
-                        <option value="A">Rombel A</option>
-                        <option value="B">Rombel B</option>
-                        <option value="C">Rombel C</option>
-                        <option value="D">Rombel D</option>
+                        <option value="A">A</option>
+                        <option value="B">B</option>
+                        <option value="C">C</option>
+                        <option value="D">D</option>
                       </select>
                     </div>
                   </div>
@@ -2047,8 +2147,8 @@
             <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden max-w-5xl mx-auto shadow-xl">
               <div className="p-4 sm:p-6 border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-lg font-bold text-white flex items-center gap-2"><Award className="text-yellow-500"/> Rekap Nilai Evaluasi - {appSession.mapel}</h2>
-                  <p className="text-xs text-slate-400 mt-1">Unduh rekap nilai khusus mapel {appSession.mapel} ke format Excel (.xlsx)</p>
+                  <h2 className="text-lg font-bold text-white flex items-center gap-2"><Award className="text-yellow-500"/> Rekap Nilai Evaluasi & Penilaian Manual - {appSession.mapel}</h2>
+                  <p className="text-xs text-slate-400 mt-1">Lakukan koreksi/entry nilai manual untuk jawaban isian dan unduh rekap nilai ke Excel (.xlsx)</p>
                 </div>
                 
                 <div className="flex flex-wrap items-center gap-2">
@@ -2085,10 +2185,10 @@
 
                 <select value={rekapFilterSubClass} onChange={(e) => setRekapFilterSubClass(e.target.value)} className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-white">
                   <option value="semua">Semua Rombel</option>
-                  <option value="A">Rombel A</option>
-                  <option value="B">Rombel B</option>
-                  <option value="C">Rombel C</option>
-                  <option value="D">Rombel D</option>
+                  <option value="A">A</option>
+                  <option value="B">B</option>
+                  <option value="C">C</option>
+                  <option value="D">D</option>
                 </select>
               </div>
 
@@ -2096,31 +2196,61 @@
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="bg-slate-950 text-slate-400 border-b border-slate-800">
+                      <th className="p-4">No</th>
                       <th className="p-4">Nama Siswa</th>
                       <th className="p-4">Kelas</th>
-                      <th className="p-4">Materi Pembelajaran</th>
-                      <th className="p-4">Nilai</th>
+                      <th className="p-4">Judul Materi</th>
+                      <th className="p-4">Nilai / Penilaian Manual</th>
                       <th className="p-4 text-center">Aksi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800 text-slate-300">
-                    {filteredScores.map((s) => (
+                    {filteredScores.map((s, idx) => (
                       <tr key={s.id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="p-4 text-slate-500 font-mono">{idx + 1}</td>
                         <td className="p-4 font-bold text-white">{s.studentName}</td>
                         <td className="p-4">Kelas {s.kelas}-{s.subKelas}</td>
                         <td className="p-4">{s.materialTitle}</td>
-                        <td className="p-4 font-bold text-blue-400">{s.score} / 100</td>
+                        <td className="p-4">
+                          {s.score !== null && s.score !== undefined ? (
+                            <span className="font-extrabold text-amber-400 text-sm bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-lg">
+                              {s.score} / 100
+                            </span>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <input 
+                                type="number" 
+                                min="0" 
+                                max="100"
+                                placeholder="0-100" 
+                                value={manualScoresInput[s.id] ?? ''}
+                                onChange={(e) => setManualScoresInput(prev => ({ ...prev, [s.id]: e.target.value }))}
+                                className="w-20 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:border-blue-500 outline-none font-bold"
+                              />
+                              <button 
+                                onClick={() => handleSaveManualScore(s)}
+                                className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 text-xs shadow-md"
+                              >
+                                <Save className="w-3.5 h-3.5" /> Simpan
+                              </button>
+                            </div>
+                          )}
+                        </td>
                         <td className="p-4 text-center">
-                          <button onClick={() => handleDeleteScore(s.id)} className="p-1.5 text-slate-500 hover:text-red-400 transition-colors">
-                            <Trash2 className="w-4 h-4" />
+                          <button 
+                            onClick={() => handleDeleteScore(s.id)}
+                            className="text-red-400 hover:text-red-300 p-1.5 bg-red-500/10 rounded-lg border border-red-500/20"
+                            title="Hapus Nilai Siswa"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </td>
                       </tr>
                     ))}
                     {filteredScores.length === 0 && (
                       <tr>
-                        <td colSpan="5" className="p-8 text-center text-slate-500 italic">
-                          Belum ada rekap nilai untuk filter yang dipilih.
+                        <td colSpan="6" className="p-8 text-center text-slate-500 italic">
+                          Belum ada rekap nilai yang tersimpan untuk filter kelas ini.
                         </td>
                       </tr>
                     )}
@@ -2131,134 +2261,113 @@
           );
         }
 
-        // DEFAULT: DASHBOARD GURU
         return (
           <div className="space-y-6 max-w-6xl mx-auto">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl flex items-center justify-between">
-                <div>
-                  <p className="text-slate-400 text-xs">Total Materi ({appSession.mapel})</p>
-                  <h3 className="text-2xl font-extrabold text-white mt-1">{myTeacherMaterials.length}</h3>
+              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl flex items-center gap-4">
+                <div className="p-3 bg-blue-600/20 text-blue-400 rounded-xl border border-blue-500/30">
+                  <BookOpen className="w-6 h-6" />
                 </div>
-                <div className="p-3 bg-blue-600/10 text-blue-400 rounded-xl border border-blue-500/20">
-                  <BookOpen className="w-6 h-6"/>
+                <div>
+                  <p className="text-slate-400 text-xs font-semibold">Total Materi ({appSession.mapel})</p>
+                  <h3 className="text-xl font-extrabold text-white mt-0.5">{myTeacherMaterials.length}</h3>
                 </div>
               </div>
 
-              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl flex items-center justify-between">
+              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl flex items-center gap-4">
+                <div className="p-3 bg-purple-600/20 text-purple-400 rounded-xl border border-purple-500/30">
+                  <List className="w-6 h-6" />
+                </div>
                 <div>
-                  <p className="text-slate-400 text-xs">Aktivitas Membaca</p>
-                  <h3 className="text-2xl font-extrabold text-emerald-400 mt-1">
-                    {Object.values(liveMonitorData).filter(p => p.mapel === appSession.mapel).length}
+                  <p className="text-slate-400 text-xs font-semibold">Total Soal</p>
+                  <h3 className="text-xl font-extrabold text-white mt-0.5">
+                    {questions.filter(q => q.mapel === appSession.mapel).length}
                   </h3>
                 </div>
-                <div className="p-3 bg-emerald-600/10 text-emerald-400 rounded-xl border border-emerald-500/20">
-                  <Radio className="w-6 h-6 animate-pulse"/>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl flex items-center gap-4">
+                <div className="p-3 bg-emerald-600/20 text-emerald-400 rounded-xl border border-emerald-500/30">
+                  <Users className="w-6 h-6" />
+                </div>
+                <div>
+                  <p className="text-slate-400 text-xs font-semibold">Database Siswa</p>
+                  <h3 className="text-xl font-extrabold text-white mt-0.5">{students.length}</h3>
                 </div>
               </div>
 
-              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl flex items-center justify-between">
-                <div>
-                  <p className="text-slate-400 text-xs">Siswa Terdaftar</p>
-                  <h3 className="text-2xl font-extrabold text-white mt-1">{students.length}</h3>
+              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl flex items-center gap-4">
+                <div className="p-3 bg-amber-600/20 text-amber-400 rounded-xl border border-amber-500/30">
+                  <Award className="w-6 h-6" />
                 </div>
-                <div className="p-3 bg-purple-600/10 text-purple-400 rounded-xl border border-purple-500/20">
-                  <Users className="w-6 h-6"/>
-                </div>
-              </div>
-
-              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl flex items-center justify-between">
                 <div>
-                  <p className="text-slate-400 text-xs">Nilai Terkumpul</p>
-                  <h3 className="text-2xl font-extrabold text-yellow-400 mt-1">
+                  <p className="text-slate-400 text-xs font-semibold">Jawaban Masuk</p>
+                  <h3 className="text-xl font-extrabold text-white mt-0.5">
                     {scores.filter(s => s.mapel === appSession.mapel).length}
                   </h3>
-                </div>
-                <div className="p-3 bg-yellow-600/10 text-yellow-400 rounded-xl border border-yellow-500/20">
-                  <Award className="w-6 h-6"/>
                 </div>
               </div>
             </div>
 
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
-              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-6 pb-4 border-b border-slate-800">
-                <div>
-                  <h3 className="font-bold text-white text-base">Materi Pembelajaran Saya ({appSession.mapel})</h3>
-                  <p className="text-slate-400 text-xs mt-0.5">Kelola materi dan latihan soal khusus mata pelajaran Anda</p>
-                </div>
-                <button 
-                  onClick={() => { setEditingMaterial(null); setActiveTab('tambah_materi'); }}
-                  className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition-all flex items-center gap-2 shadow-lg"
-                >
-                  <PlusCircle className="w-4 h-4"/> Terbitkan Materi Baru
-                </button>
-              </div>
+            <div className="flex flex-wrap gap-3">
+              <button onClick={() => setActiveTab('tambah_materi')} className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition-all flex items-center gap-2 shadow-lg">
+                <PlusCircle className="w-4 h-4"/> Terbitkan Materi Baru
+              </button>
+              <button onClick={() => setActiveTab('monitor')} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition-all flex items-center gap-2 shadow-lg">
+                <Radio className="w-4 h-4"/> Pemantauan Realtime Siswa
+              </button>
+              <button onClick={() => setActiveTab('rekap_nilai')} className="bg-amber-600 hover:bg-amber-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition-all flex items-center gap-2 shadow-lg">
+                <Award className="w-4 h-4"/> Rekap Nilai Evaluasi
+              </button>
+              <button onClick={() => setActiveTab('upload_siswa')} className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold px-4 py-2.5 rounded-xl text-xs transition-all flex items-center gap-2">
+                <UserPlus className="w-4 h-4 text-blue-400"/> Database Siswa
+              </button>
+            </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl space-y-4">
+              <h3 className="font-bold text-white text-sm">Daftar Materi Mapel {appSession.mapel}</h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {myTeacherMaterials.map(m => {
                   const qCount = questions.filter(q => q.materialId === m.id).length;
                   return (
-                    <div key={m.id} className="bg-slate-950 border border-slate-800 p-5 rounded-2xl flex flex-col justify-between">
+                    <div key={m.id} className="bg-slate-950 border border-slate-800 p-4 rounded-xl flex flex-col justify-between space-y-3">
                       <div>
-                        {m.imageUrl && (
-                          <div className="h-32 bg-slate-900 overflow-hidden rounded-xl mb-3 flex items-center justify-center">
-                            <img 
-                              src={getSafeImageUrl(m.imageUrl)} 
-                              alt={m.title} 
-                              referrerPolicy="no-referrer"
-                              onError={(e) => {
-                                if (!e.target.dataset.tried) {
-                                  e.target.dataset.tried = 'true';
-                                  e.target.src = `https://images.weserv.nl/?url=${encodeURIComponent(m.imageUrl)}`;
-                                }
-                              }}
-                              className="max-h-full max-w-full object-contain" 
-                            />
-                          </div>
-                        )}
-                        <div className="flex justify-between items-center">
+                        <div className="flex justify-between items-start">
                           <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded font-bold">
-                            Kelas {m.kelas} • Rombel {m.subKelasTarget}
+                            Kelas {m.kelas} ({m.subKelasTarget}) • {m.durationMinutes} Menit
                           </span>
-                          <span className="text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded font-bold">
-                            {m.durationMinutes} Mnt
-                          </span>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => { setEditingMaterial(m); setActiveTab('edit_materi'); }} className="p-1 text-slate-400 hover:text-amber-400 transition-colors">
+                              <Edit className="w-4 h-4" />
+                            </button>
+                            <button onClick={() => handleDeleteMaterial(m.id)} className="p-1 text-slate-400 hover:text-red-400 transition-colors">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
-
                         <h4 className="font-bold text-white text-sm mt-2">{m.title}</h4>
-                        <p className="text-slate-400 text-xs line-clamp-2 mt-1">{m.content}</p>
+                        <div className="text-slate-400 text-xs line-clamp-2 mt-1">
+                          <RenderMathText text={m.content} />
+                        </div>
                       </div>
 
-                      <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-2">
+                      <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
+                        <span className="text-xs text-slate-400 font-medium">Soal Tersimpan: <strong className="text-emerald-400">{qCount} Soal</strong></span>
                         <button 
-                          onClick={() => { setSelectedMaterial(m); setActiveTab('kelola_soal'); }}
-                          className="w-full bg-slate-900 hover:bg-slate-800 text-blue-400 border border-blue-500/20 font-bold py-2 rounded-xl text-xs transition-all flex items-center justify-center gap-1.5"
+                          onClick={() => { setSelectedMaterial(m); setActiveTab('kelola_soal'); }} 
+                          className="bg-slate-800 hover:bg-slate-700 text-blue-400 border border-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
                         >
-                          <List className="w-3.5 h-3.5"/> Kelola Soal ({qCount})
+                          <List className="w-3.5 h-3.5" /> Kelola Soal
                         </button>
-
-                        <div className="flex gap-2">
-                          <button 
-                            onClick={() => { setEditingMaterial(m); setActiveTab('edit_materi'); }}
-                            className="flex-1 bg-slate-900 hover:bg-slate-800 text-slate-300 font-bold py-2 rounded-xl text-xs transition-all flex items-center justify-center gap-1 border border-slate-800"
-                          >
-                            <Edit className="w-3.5 h-3.5"/> Edit
-                          </button>
-                          <button 
-                            onClick={() => handleDeleteMaterial(m.id)}
-                            className="bg-red-500/10 hover:bg-red-500/20 text-red-400 font-bold px-3 py-2 rounded-xl text-xs transition-all border border-red-500/20"
-                          >
-                            <Trash2 className="w-3.5 h-3.5"/>
-                          </button>
-                        </div>
                       </div>
                     </div>
                   );
                 })}
 
                 {myTeacherMaterials.length === 0 && (
-                  <div className="col-span-full p-8 text-center text-slate-500 bg-slate-950 rounded-2xl border border-slate-800 text-xs">
-                    Belum ada materi pembelajaran yang dibuat untuk mapel <strong className="text-white">{appSession.mapel}</strong>.
+                  <div className="col-span-full p-8 text-center text-slate-500 italic text-xs">
+                    Belum ada materi terbit untuk mata pelajaran {appSession.mapel}.
                   </div>
                 )}
               </div>
@@ -2268,58 +2377,26 @@
       };
 
       return (
-        <div className="min-h-screen bg-slate-950 text-slate-100 p-4">
-          <header className="max-w-6xl mx-auto flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-900 border border-slate-800 p-4 rounded-2xl mb-6 gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="font-extrabold text-white text-base">{appSession.fullName}</h1>
-                <span className="text-[10px] bg-blue-600 text-white font-bold px-2 py-0.5 rounded-full">{appSession.mapel}</span>
+        <div className="min-h-screen bg-slate-950 text-slate-100 p-4 max-w-7xl mx-auto">
+          <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-900 border border-slate-800 p-4 sm:p-6 rounded-3xl mb-6 shadow-2xl gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-blue-600 rounded-2xl shadow-lg">
+                <LayoutDashboard className="w-6 h-6 text-white" />
               </div>
-              <p className="text-slate-400 text-xs">NIP: {appSession.nip}</p>
+              <div>
+                <h1 className="font-extrabold text-white text-base sm:text-lg">{appSession.fullName}</h1>
+                <p className="text-xs text-slate-400">NIP: {appSession.nip} • Mapel: <strong className="text-blue-400">{appSession.mapel}</strong></p>
+              </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <button 
-                onClick={() => setActiveTab('dashboard')} 
-                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${activeTab === 'dashboard' ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'}`}
-              >
-                <LayoutDashboard className="w-3.5 h-3.5"/> Dashboard
-              </button>
-              
-              <button 
-                onClick={() => setActiveTab('monitor')} 
-                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${activeTab === 'monitor' ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'}`}
-              >
-                <Radio className="w-3.5 h-3.5 text-emerald-400"/> Pemantauan Realtime
-              </button>
-
-              <button 
-                onClick={() => setActiveTab('upload_siswa')} 
-                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${activeTab === 'upload_siswa' ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'}`}
-              >
-                <UserPlus className="w-3.5 h-3.5"/> Database Siswa
-              </button>
-
-              <button 
-                onClick={() => setActiveTab('rekap_nilai')} 
-                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${activeTab === 'rekap_nilai' ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'}`}
-              >
-                <Award className="w-3.5 h-3.5 text-yellow-400"/> Rekap Nilai
-              </button>
-
-              <button 
-                onClick={handleLogout} 
-                className="text-red-400 hover:text-red-300 text-xs font-semibold flex items-center gap-1 bg-red-500/10 px-3 py-2 rounded-xl border border-red-500/20 ml-2"
-              >
-                <LogOut className="w-3.5 h-3.5"/> Keluar
-              </button>
-            </div>
+            <button onClick={handleLogout} className="text-red-400 hover:text-red-300 text-xs font-semibold flex items-center gap-1.5 bg-red-500/10 px-4 py-2.5 rounded-xl border border-red-500/20">
+              <LogOut className="w-4 h-4"/> Keluar Akun Guru
+            </button>
           </header>
 
           {notification && (
-            <div className="max-w-6xl mx-auto mb-4 bg-blue-600/20 border border-blue-500/30 text-blue-300 px-4 py-3 rounded-2xl text-xs flex justify-between items-center">
-              <span>{notification}</span>
-              <button onClick={() => setNotification(null)}><X className="w-4 h-4"/></button>
+            <div className="mb-6 bg-blue-600/20 border border-blue-500/30 text-blue-200 px-4 py-3 rounded-2xl text-xs font-semibold shadow-lg text-center animate-fade-in">
+              {notification}
             </div>
           )}
 
@@ -2328,7 +2405,8 @@
       );
     }
 
-    const root = createRoot(document.getElementById('root'));
+    const container = document.getElementById('root');
+    const root = createRoot(container);
     root.render(<AppWrapper />);
   </script>
 </body>
