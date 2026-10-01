@@ -285,6 +285,9 @@
       const updatePresence = async (remSecs, status) => {
         if (!studentSession || !activeMaterial) return;
         const presKey = `${studentSession.id}_${activeMaterial.id}`;
+        
+        const startedAt = activeMaterial.startedAt || Date.now();
+
         const presData = {
           id: presKey,
           studentId: studentSession.id,
@@ -296,12 +299,13 @@
           mapel: activeMaterial.mapel || 'UMUM',
           remainingSeconds: remSecs,
           status: status,
+          startedAt: startedAt,
           lastUpdated: Date.now()
         };
 
         try {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'student_presence', presKey);
-          await setDoc(docRef, presData);
+          await setDoc(docRef, presData, { merge: true });
         } catch (e) {}
 
         if (broadcast) {
@@ -310,7 +314,8 @@
       };
 
       const startReading = (mat) => {
-        setActiveMaterial(mat);
+        const matWithStartTime = { ...mat, startedAt: Date.now() };
+        setActiveMaterial(matWithStartTime);
         setUserAnswers({});
         setQuizResult(null);
         const durationSecs = (mat.durationMinutes || 15) * 60;
@@ -800,6 +805,7 @@
       const [manageStudentClass, setManageStudentClass] = useState('7');
       const [manageStudentSubClass, setManageStudentSubClass] = useState('A');
       const [filterClassGuru, setFilterClassGuru] = useState('semua');
+      const [filterSubClassGuru, setFilterSubClassGuru] = useState('semua');
 
       const [rekapFilterClass, setRekapFilterClass] = useState('semua');
       const [rekapFilterSubClass, setRekapFilterSubClass] = useState('semua');
@@ -1164,6 +1170,33 @@
         showNotification("Soal berhasil dihapus.");
       };
 
+      const handleDeleteAllQuestionsInMaterial = async () => {
+        if (!selectedMaterial) return;
+        const targetQuestions = questions.filter(q => q.materialId === selectedMaterial.id);
+        if (targetQuestions.length === 0) {
+          showNotification("Tidak ada soal tersimpan untuk dihapus.");
+          return;
+        }
+
+        if (!window.confirm(`Apakah Anda yakin ingin menghapus SEMUA (${targetQuestions.length}) soal pada materi "${selectedMaterial.title}"?`)) return;
+
+        const idsToDelete = targetQuestions.map(q => q.id);
+        setQuestions(prev => prev.filter(q => !idsToDelete.includes(q.id)));
+        if (editingQuestion && idsToDelete.includes(editingQuestion.id)) {
+          setEditingQuestion(null);
+        }
+
+        try {
+          const deletePromises = idsToDelete.map(id => {
+            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'questions', id);
+            return deleteDoc(docRef);
+          });
+          await Promise.all(deletePromises);
+        } catch (e) {}
+
+        showNotification(`Seluruh soal (${idsToDelete.length} soal) berhasil dihapus.`);
+      };
+
       const handleDeleteScore = async (scoreId) => {
         if (!window.confirm("Apakah Anda yakin ingin menghapus data nilai ini?")) return;
         setScores(prev => prev.filter(s => s.id !== scoreId));
@@ -1174,6 +1207,7 @@
         showNotification("Data nilai berhasil dihapus.");
       };
 
+      // FUNGSI HAPUS NILAI KELAS YANG SUDAH DIPERBAIKI (HAPUS SEKALIGUS SERENTAK)
       const handleDeleteClassScores = async () => {
         if (rekapFilterClass === 'semua') {
           showNotification("Pilih kelas tertentu terlebih dahulu untuk menghapus nilai kelas!");
@@ -1187,7 +1221,7 @@
 
         const targetScores = scores.filter(s => {
           const matchMapel = s.mapel === appSession.mapel;
-          const matchClass = s.kelas === rekapFilterClass;
+          const matchClass = String(s.kelas) === String(rekapFilterClass);
           const matchSubClass = rekapFilterSubClass === 'semua' || s.subKelas === rekapFilterSubClass;
           return matchMapel && matchClass && matchSubClass;
         });
@@ -1198,16 +1232,21 @@
         }
 
         const idsToDelete = targetScores.map(s => s.id);
-        setScores(prev => prev.filter(s => !idsToDelete.includes(s.id)));
+        const updatedScores = scores.filter(s => !idsToDelete.includes(s.id));
+        setScores(updatedScores);
+        localStorage.setItem('elearning_scores_v4', JSON.stringify(updatedScores));
 
         try {
-          for (const id of idsToDelete) {
+          const deletePromises = idsToDelete.map(id => {
             const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'scores', id);
-            await deleteDoc(docRef);
-          }
-        } catch (e) {}
-
-        showNotification("Data nilai kelas berhasil dihapus.");
+            return deleteDoc(docRef);
+          });
+          await Promise.all(deletePromises);
+          showNotification(`Seluruh data nilai Kelas ${rekapFilterClass} (${idsToDelete.length} data) berhasil dihapus sekaligus.`);
+        } catch (e) {
+          console.error(e);
+          showNotification("Gagal menghapus beberapa data dari cloud, namun data lokal telah diperbarui.");
+        }
       };
 
       const handleUploadStudents = async (e) => {
@@ -1287,16 +1326,21 @@
           return;
         }
 
-        if (!window.confirm(`Apakah Anda yakin ingin menghapus SELURUH data pemantauan Kelas ${filterClassGuru}?`)) return;
+        const targetLabel = filterSubClassGuru === 'semua'
+          ? `Kelas ${filterClassGuru}`
+          : `Kelas ${filterClassGuru} Rombel ${filterSubClassGuru}`;
+
+        if (!window.confirm(`Apakah Anda yakin ingin menghapus SELURUH data pemantauan ${targetLabel}?`)) return;
 
         const targetPresences = Object.values(liveMonitorData).filter(p => {
           const matchMapel = p.mapel === appSession.mapel;
-          const matchClass = p.kelas === filterClassGuru;
-          return matchMapel && matchClass;
+          const matchClass = String(p.kelas) === String(filterClassGuru);
+          const matchSubClass = filterSubClassGuru === 'semua' || p.subKelas === filterSubClassGuru;
+          return matchMapel && matchClass && matchSubClass;
         });
 
         if (targetPresences.length === 0) {
-          showNotification("Tidak ada data pemantauan yang sesuai dengan filter kelas untuk dihapus.");
+          showNotification("Tidak ada data pemantauan yang sesuai dengan filter kelas/rombel untuk dihapus.");
           return;
         }
 
@@ -1308,13 +1352,14 @@
         });
 
         try {
-          for (const id of idsToDelete) {
+          const deletePromises = idsToDelete.map(id => {
             const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'student_presence', id);
-            await deleteDoc(docRef);
-          }
+            return deleteDoc(docRef);
+          });
+          await Promise.all(deletePromises);
         } catch (e) {}
 
-        showNotification("Data pemantauan kelas berhasil dihapus.");
+        showNotification(`Data pemantauan ${targetLabel} berhasil dihapus.`);
       };
 
       const exportToExcel = (filteredScores) => {
@@ -1326,7 +1371,7 @@
         const excelData = filteredScores.map((s, index) => ({
           'No': index + 1,
           'Nama Siswa': s.studentName || '-',
-          'Kelas': s.kelas ? `Kelas ${s.kelas}` : '-',
+          'Kelas': s.kelas ? `Kelas ${s.kelas}-${s.subKelas}` : '-',
           'Mata Pelajaran': s.mapel || '-',
           'Judul Materi': s.materialTitle || '-',
           'Nilai Akhir': s.score ?? 0,
@@ -1415,10 +1460,11 @@
           const presenceList = Object.values(liveMonitorData)
             .filter(p => {
               const matchMapel = p.mapel === appSession.mapel;
-              const matchClass = filterClassGuru === 'semua' || p.kelas === filterClassGuru;
-              return matchMapel && matchClass;
+              const matchClass = filterClassGuru === 'semua' || String(p.kelas) === String(filterClassGuru);
+              const matchSubClass = filterSubClassGuru === 'semua' || p.subKelas === filterSubClassGuru;
+              return matchMapel && matchClass && matchSubClass;
             })
-            .sort((a, b) => b.lastUpdated - a.lastUpdated);
+            .sort((a, b) => (a.studentName || '').localeCompare(b.studentName || ''));
 
           return (
             <div className="space-y-6 max-w-6xl mx-auto">
@@ -1435,7 +1481,7 @@
                     disabled={filterClassGuru === 'semua'} 
                     className="text-red-400 hover:text-white disabled:opacity-50 flex items-center gap-1.5 text-xs font-semibold bg-red-500/10 hover:bg-red-600 border border-red-500/20 px-3 py-2 rounded-xl transition-all"
                   >
-                    <Trash2 className="w-4 h-4"/> Hapus Pemantauan Kelas {filterClassGuru !== 'semua' ? filterClassGuru : ''}
+                    <Trash2 className="w-4 h-4"/> Hapus Pemantauan {filterClassGuru !== 'semua' ? `Kelas ${filterClassGuru}${filterSubClassGuru !== 'semua' ? '-' + filterSubClassGuru : ''}` : ''}
                   </button>
                   <button onClick={() => setActiveTab('dashboard')} className="text-slate-400 hover:text-white flex items-center gap-1 text-xs font-semibold bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl">
                     <ArrowLeft className="w-4 h-4"/> Kembali
@@ -1443,22 +1489,37 @@
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 p-3 rounded-2xl text-xs font-semibold">
-                <span className="text-slate-400">Filter Pemantauan Kelas:</span>
-                {['semua', '7', '8', '9'].map(k => (
-                  <button 
-                    key={k} 
-                    onClick={() => setFilterClassGuru(k)} 
-                    className={`px-3 py-1.5 rounded-lg capitalize transition-all ${filterClassGuru === k ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
-                  >
-                    {k === 'semua' ? 'Semua' : `Kelas ${k}`}
-                  </button>
-                ))}
+              <div className="flex flex-wrap items-center gap-4 bg-slate-900 border border-slate-800 p-3 rounded-2xl text-xs font-semibold">
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400">Kelas:</span>
+                  {['semua', '7', '8', '9'].map(k => (
+                    <button 
+                      key={k} 
+                      onClick={() => setFilterClassGuru(k)} 
+                      className={`px-3 py-1.5 rounded-lg capitalize transition-all ${filterClassGuru === k ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                    >
+                      {k === 'semua' ? 'Semua' : `Kelas ${k}`}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2 border-l border-slate-800 pl-4">
+                  <span className="text-slate-400">Rombel:</span>
+                  {['semua', 'A', 'B', 'C', 'D'].map(r => (
+                    <button 
+                      key={r} 
+                      onClick={() => setFilterSubClassGuru(r)} 
+                      className={`px-2.5 py-1.5 rounded-lg capitalize transition-all ${filterSubClassGuru === r ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                    >
+                      {r === 'semua' ? 'Semua' : `Rombel ${r}`}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {presenceList.length === 0 ? (
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 italic text-xs">
-                  Belum ada aktivitas membaca/belajar yang terpantau pada mapel {appSession.mapel} {filterClassGuru !== 'semua' ? `Kelas ${filterClassGuru}` : ''}.
+                  Belum ada aktivitas membaca/belajar yang terpantau pada mapel {appSession.mapel} {filterClassGuru !== 'semua' ? `Kelas ${filterClassGuru}` : ''} {filterSubClassGuru !== 'semua' ? `Rombel ${filterSubClassGuru}` : ''}.
                 </div>
               ) : (
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
@@ -1790,7 +1851,17 @@
 
               {/* LIST SOAL TERDISPLAI */}
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl">
-                <h3 className="font-bold text-white text-sm mb-4">Daftar Soal Tersimpan ({matQuestions.length})</h3>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                  <h3 className="font-bold text-white text-sm">Daftar Soal Tersimpan ({matQuestions.length})</h3>
+                  {matQuestions.length > 0 && (
+                    <button 
+                      onClick={handleDeleteAllQuestionsInMaterial} 
+                      className="text-red-400 hover:text-white flex items-center gap-1.5 text-xs font-semibold bg-red-500/10 hover:bg-red-600 border border-red-500/20 px-3 py-1.5 rounded-xl transition-all self-start sm:self-auto"
+                    >
+                      <Trash2 className="w-3.5 h-3.5"/> Hapus Semua Soal
+                    </button>
+                  )}
+                </div>
                 <div className="space-y-3">
                   {matQuestions.map((q, idx) => (
                     <div key={q.id} className={`p-4 rounded-xl bg-slate-950 border transition-all relative ${editingQuestion && editingQuestion.id === q.id ? 'border-amber-500/80 ring-1 ring-amber-500' : 'border-slate-800'}`}>
@@ -1951,7 +2022,7 @@
         if (activeTab === 'rekap_nilai') {
           const filteredScores = scores.filter(s => {
             const matchMapel = s.mapel === appSession.mapel;
-            const matchClass = rekapFilterClass === 'semua' || s.kelas === rekapFilterClass;
+            const matchClass = rekapFilterClass === 'semua' || String(s.kelas) === String(rekapFilterClass);
             const matchSubClass = rekapFilterSubClass === 'semua' || s.subKelas === rekapFilterSubClass;
             return matchMapel && matchClass && matchSubClass;
           });
@@ -2013,21 +2084,21 @@
                       <th className="p-4">Nama Siswa</th>
                       <th className="p-4">Kelas</th>
                       <th className="p-4">Materi</th>
-                      <th className="p-4 text-center">Nilai</th>
+                      <th className="p-4">Nilai</th>
                       <th className="p-4 text-center">Aksi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800 text-slate-300">
                     {filteredScores.map((s, idx) => (
-                      <tr key={s.id || idx}>
-                        <td className="p-4 text-slate-500 font-mono">{idx + 1}</td>
+                      <tr key={s.id} className="hover:bg-slate-800/40">
+                        <td className="p-4 text-slate-500">{idx + 1}</td>
                         <td className="p-4 font-bold text-white">{s.studentName}</td>
                         <td className="p-4">Kelas {s.kelas}-{s.subKelas}</td>
                         <td className="p-4">{s.materialTitle}</td>
-                        <td className="p-4 text-center font-bold font-mono text-emerald-400 text-sm">{s.score}</td>
+                        <td className="p-4 font-bold text-blue-400">{s.score} / 100</td>
                         <td className="p-4 text-center">
-                          <button onClick={() => handleDeleteScore(s.id)} className="text-slate-500 hover:text-red-400 p-1.5">
-                            <Trash2 className="w-4 h-4"/>
+                          <button onClick={() => handleDeleteScore(s.id)} className="text-slate-500 hover:text-red-400 p-1">
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </td>
                       </tr>
@@ -2035,7 +2106,7 @@
                     {filteredScores.length === 0 && (
                       <tr>
                         <td colSpan="6" className="p-8 text-center text-slate-500 italic">
-                          Belum ada rekap nilai masuk untuk filter ini.
+                          Belum ada data nilai pengerjaan soal untuk mapel {appSession.mapel}.
                         </td>
                       </tr>
                     )}
@@ -2046,85 +2117,49 @@
           );
         }
 
-        // DEFAULT: DASHBOARD UTAMA GURU DENGAN SIDEBAR KIRI
         return (
-          <div className="flex flex-col md:flex-row gap-6 max-w-7xl mx-auto">
-            {/* SIDEBAR SEBELAH KIRI */}
-            <aside className="w-full md:w-64 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col justify-between shrink-0 self-start md:sticky md:top-4">
-              <div className="space-y-6">
-                {/* PROFIL RINGKAS GURU */}
-                <div className="border-b border-slate-800 pb-4">
-                  <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2.5 py-1 rounded-lg font-bold">
-                    {appSession.mapel}
-                  </span>
-                  <h1 className="text-base font-extrabold text-white mt-2 leading-snug">{appSession.fullName}</h1>
-                  <p className="text-slate-400 text-[11px] mt-0.5 font-mono">NIP: {appSession.nip}</p>
-                </div>
-
-                {/* NAVIGASI SIDEBAR */}
-                <nav className="space-y-2">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block px-1">Menu Utama</span>
-                  
-                  <button 
-                    onClick={() => setActiveTab('tambah_materi')} 
-                    className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 py-2.5 rounded-xl text-xs transition-all shadow-lg flex items-center gap-2.5"
-                  >
-                    <PlusCircle className="w-4 h-4"/> Terbitkan Materi Baru
-                  </button>
-
-                  <button 
-                    onClick={() => setActiveTab('upload_siswa')} 
-                    className="w-full bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-800 font-bold px-3 py-2.5 rounded-xl text-xs transition-all flex items-center gap-2.5"
-                  >
-                    <UserPlus className="w-4 h-4 text-blue-400"/> Database Siswa
-                  </button>
-
-                  <button 
-                    onClick={() => setActiveTab('rekap_nilai')} 
-                    className="w-full bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-800 font-bold px-3 py-2.5 rounded-xl text-xs transition-all flex items-center gap-2.5"
-                  >
-                    <Award className="w-4 h-4 text-amber-400"/> Rekap Nilai Evaluasi
-                  </button>
-
-                  <button 
-                    onClick={() => setActiveTab('monitor')} 
-                    className="w-full bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-800 font-bold px-3 py-2.5 rounded-xl text-xs transition-all flex items-center gap-2.5"
-                  >
-                    <Radio className="w-4 h-4 text-emerald-400 animate-pulse"/> Pantau Membaca
-                  </button>
-                </nav>
+          <div className="space-y-6 max-w-6xl mx-auto">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div>
+                <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2.5 py-1 rounded-lg font-bold">
+                  PORTAL GURU • {appSession.mapel}
+                </span>
+                <h1 className="text-xl font-extrabold text-white mt-2">{appSession.fullName}</h1>
+                <p className="text-xs text-slate-400">NIP: {appSession.nip}</p>
               </div>
 
-              <div className="pt-6 mt-6 border-t border-slate-800">
-                <button 
-                  onClick={handleLogout} 
-                  className="w-full bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 font-bold px-3 py-2.5 rounded-xl text-xs transition-all flex items-center justify-center gap-2"
-                >
-                  <LogOut className="w-4 h-4"/> Keluar Sesi Guru
+              <div className="flex flex-wrap items-center gap-2">
+                <button onClick={() => setActiveTab('tambah_materi')} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all flex items-center gap-1.5">
+                  <PlusCircle className="w-4 h-4"/> Terbitkan Materi Baru
+                </button>
+                <button onClick={() => setActiveTab('monitor')} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all flex items-center gap-1.5">
+                  <Radio className="w-4 h-4"/> Pantauan Membaca
+                </button>
+                <button onClick={() => setActiveTab('rekap_nilai')} className="bg-yellow-600 hover:bg-yellow-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all flex items-center gap-1.5">
+                  <Award className="w-4 h-4"/> Rekap Nilai
+                </button>
+                <button onClick={() => setActiveTab('upload_siswa')} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all flex items-center gap-1.5">
+                  <UserPlus className="w-4 h-4"/> Data Siswa
+                </button>
+                <button onClick={handleLogout} className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 px-3 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1">
+                  <LogOut className="w-4 h-4"/> Keluar
                 </button>
               </div>
-            </aside>
+            </div>
 
-            {/* KONTEN KANAN: DAFTAR MATERI SAYA */}
-            <main className="flex-1 space-y-4">
-              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-base font-extrabold text-white">Daftar Materi Pembelajaran ({appSession.mapel})</h2>
-                  <p className="text-slate-400 text-xs mt-0.5">Kelola materi dan soal latihan khusus mapel {appSession.mapel}</p>
-                </div>
-                <div className="text-xs bg-slate-950 border border-slate-800 px-3 py-1.5 rounded-xl text-slate-400 font-semibold">
-                  Total Materi: <strong className="text-blue-400">{myTeacherMaterials.length}</strong>
-                </div>
-              </div>
+            <div className="space-y-4">
+              <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-blue-500"/> Daftar Materi Terbitan Anda ({myTeacherMaterials.length})
+              </h3>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {myTeacherMaterials.map(m => {
                   const qCount = questions.filter(q => q.materialId === m.id).length;
                   return (
-                    <div key={m.id} className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex flex-col justify-between hover:border-slate-700 transition-all shadow-xl">
+                    <div key={m.id} className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex flex-col justify-between shadow-lg">
                       <div>
                         {m.imageUrl && (
-                          <div className="h-32 bg-slate-950 overflow-hidden rounded-xl mb-3 flex items-center justify-center">
+                          <div className="h-36 bg-slate-950 overflow-hidden rounded-xl mb-3 flex items-center justify-center border border-slate-800/80">
                             <img 
                               src={getSafeImageUrl(m.imageUrl)} 
                               alt={m.title} 
@@ -2139,41 +2174,39 @@
                             />
                           </div>
                         )}
-                        
-                        <div className="flex justify-between items-center mb-2">
+                        <div className="flex justify-between items-center">
                           <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-lg font-bold">
-                            Kelas {m.kelas} • Sem {m.semester}
+                            Kelas {m.kelas} • Rombel {m.subKelasTarget}
                           </span>
-                          <span className="text-[10px] text-slate-400 font-mono">
-                            {m.durationMinutes || 15} Menit
+                          <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                            <Clock className="w-3 h-3"/> {m.durationMinutes} Menit
                           </span>
                         </div>
-
-                        <h3 className="font-bold text-white text-sm leading-snug">{m.title}</h3>
+                        <h4 className="font-bold text-white text-sm mt-2">{m.title}</h4>
                         <div className="text-slate-400 text-xs line-clamp-2 mt-1">
                           <RenderMathText text={m.content} />
                         </div>
                       </div>
 
-                      <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                      <div className="mt-5 pt-4 border-t border-slate-800 flex items-center justify-between gap-2">
                         <button 
-                          onClick={() => { setSelectedMaterial(m); setActiveTab('kelola_soal'); }}
-                          className="bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 text-xs px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 transition-all"
+                          onClick={() => { setSelectedMaterial(m); setActiveTab('kelola_soal'); }} 
+                          className="bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
                         >
-                          <List className="w-3.5 h-3.5"/> Soal ({qCount})
+                          <List className="w-3.5 h-3.5"/> Kelola Soal ({qCount})
                         </button>
 
                         <div className="flex items-center gap-1">
                           <button 
-                            onClick={() => { setEditingMaterial(m); setActiveTab('edit_materi'); }}
-                            className="p-1.5 text-slate-400 hover:text-amber-400 transition-colors"
+                            onClick={() => { setEditingMaterial(m); setActiveTab('edit_materi'); }} 
+                            className="p-2 bg-slate-950 hover:bg-slate-800 text-amber-400 rounded-xl border border-slate-800 transition-all"
                             title="Edit Materi"
                           >
                             <Edit className="w-4 h-4"/>
                           </button>
                           <button 
-                            onClick={() => handleDeleteMaterial(m.id)}
-                            className="p-1.5 text-slate-400 hover:text-red-400 transition-colors"
+                            onClick={() => handleDeleteMaterial(m.id)} 
+                            className="p-2 bg-slate-950 hover:bg-slate-800 text-red-400 rounded-xl border border-slate-800 transition-all"
                             title="Hapus Materi"
                           >
                             <Trash2 className="w-4 h-4"/>
@@ -2185,30 +2218,30 @@
                 })}
 
                 {myTeacherMaterials.length === 0 && (
-                  <div className="col-span-full bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-                    Belum ada materi terbit untuk mata pelajaran {appSession.mapel}. Klik tombol "Terbitkan Materi Baru" untuk membuat materi pertama Anda.
+                  <div className="col-span-full p-8 text-center text-slate-500 bg-slate-900/50 rounded-2xl border border-slate-800 text-xs">
+                    Anda belum menerbitkan materi untuk Mata Pelajaran <strong className="text-white">{appSession.mapel}</strong>. Klik tombol "Terbitkan Materi Baru" untuk membuat materi.
                   </div>
                 )}
               </div>
-            </main>
+            </div>
           </div>
         );
       };
 
       return (
-        <div className="p-4 sm:p-6 min-h-screen">
+        <div className="min-h-screen bg-slate-950 text-slate-100 p-4 sm:p-6">
           {notification && (
-            <div className="fixed bottom-4 right-4 z-50 bg-blue-600 text-white px-4 py-3 rounded-2xl shadow-2xl border border-blue-400 text-xs font-bold animate-bounce flex items-center gap-2">
-              <CheckCircle className="w-4 h-4"/> {notification}
+            <div className="fixed top-4 right-4 z-50 bg-blue-600 text-white font-bold px-4 py-3 rounded-2xl shadow-2xl text-xs flex items-center gap-2 animate-bounce">
+              <CheckCircle className="w-4 h-4" /> {notification}
             </div>
           )}
+
           {renderTeacherContent()}
         </div>
       );
     }
 
-    const container = document.getElementById('root');
-    const root = createRoot(container);
+    const root = createRoot(document.getElementById('root'));
     root.render(<AppWrapper />);
   </script>
 </body>
