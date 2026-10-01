@@ -277,7 +277,7 @@
           }, 1000);
         } else if (timer === 0 && isReading) {
           setIsReading(false);
-          updatePresence(0, 'Selesai');
+          updatePresence(0, 'Belum Aktif');
         }
         return () => clearInterval(interval);
       }, [isReading, timer, isTabFocused]);
@@ -470,7 +470,7 @@
 
           {activeMaterial ? (
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6">
-              <button onClick={() => { setIsReading(false); setActiveMaterial(null); setQuizResult(null); setUserAnswers({}); updatePresence(0, 'Selesai'); }} className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
+              <button onClick={() => { setIsReading(false); setActiveMaterial(null); setQuizResult(null); setUserAnswers({}); updatePresence(0, 'Belum Aktif'); }} className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
                 <ArrowLeft className="w-4 h-4"/> Kembali ke Daftar Materi
               </button>
 
@@ -558,7 +558,7 @@
                       Jawaban Benar: {quizResult.correctAnswers} dari {quizResult.totalQuestions} Soal
                     </p>
                     <button 
-                      onClick={() => { setIsReading(false); setActiveMaterial(null); setQuizResult(null); setUserAnswers({}); updatePresence(0, 'Selesai'); }}
+                      onClick={() => { setIsReading(false); setActiveMaterial(null); setQuizResult(null); setUserAnswers({}); updatePresence(0, 'Belum Aktif'); }}
                       className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-2.5 rounded-xl text-xs transition-all mt-4"
                     >
                       Selesai & Kembali ke Daftar Materi
@@ -1170,33 +1170,6 @@
         showNotification("Soal berhasil dihapus.");
       };
 
-      const handleDeleteAllQuestionsInMaterial = async () => {
-        if (!selectedMaterial) return;
-        const targetQuestions = questions.filter(q => q.materialId === selectedMaterial.id);
-        if (targetQuestions.length === 0) {
-          showNotification("Tidak ada soal tersimpan untuk dihapus.");
-          return;
-        }
-
-        if (!window.confirm(`Apakah Anda yakin ingin menghapus SEMUA (${targetQuestions.length}) soal pada materi "${selectedMaterial.title}"?`)) return;
-
-        const idsToDelete = targetQuestions.map(q => q.id);
-        setQuestions(prev => prev.filter(q => !idsToDelete.includes(q.id)));
-        if (editingQuestion && idsToDelete.includes(editingQuestion.id)) {
-          setEditingQuestion(null);
-        }
-
-        try {
-          const deletePromises = idsToDelete.map(id => {
-            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'questions', id);
-            return deleteDoc(docRef);
-          });
-          await Promise.all(deletePromises);
-        } catch (e) {}
-
-        showNotification(`Seluruh soal (${idsToDelete.length} soal) berhasil dihapus.`);
-      };
-
       const handleDeleteScore = async (scoreId) => {
         if (!window.confirm("Apakah Anda yakin ingin menghapus data nilai ini?")) return;
         setScores(prev => prev.filter(s => s.id !== scoreId));
@@ -1288,7 +1261,7 @@
         const updatedPres = {
           ...targetPres,
           status: newStatus,
-          remainingSeconds: newStatus === 'Selesai' ? 0 : targetPres.remainingSeconds,
+          remainingSeconds: newStatus === 'Belum Aktif' ? 0 : targetPres.remainingSeconds,
           lastUpdated: Date.now()
         };
 
@@ -1360,6 +1333,39 @@
         } catch (e) {}
 
         showNotification(`Data pemantauan ${targetLabel} berhasil dihapus.`);
+      };
+
+      const handleDeleteInactiveMonitoring = async () => {
+        const inactivePresences = Object.values(liveMonitorData).filter(p => {
+          const matchMapel = p.mapel === appSession.mapel;
+          const matchClass = filterClassGuru === 'semua' || String(p.kelas) === String(filterClassGuru);
+          const matchSubClass = filterSubClassGuru === 'semua' || p.subKelas === filterSubClassGuru;
+          return matchMapel && matchClass && matchSubClass && (p.status === 'Belum Aktif' || p.status === 'Selesai');
+        });
+
+        if (inactivePresences.length === 0) {
+          showNotification("Tidak ada data pemantauan belum aktif / selesai untuk dihapus.");
+          return;
+        }
+
+        if (!window.confirm(`Apakah Anda yakin ingin menghapus seluruh data pemantauan yang belum aktif (${inactivePresences.length} data)?`)) return;
+
+        const idsToDelete = inactivePresences.map(p => p.id);
+        setLiveMonitorData(prev => {
+          const nextData = { ...prev };
+          idsToDelete.forEach(id => delete nextData[id]);
+          return nextData;
+        });
+
+        try {
+          const deletePromises = idsToDelete.map(id => {
+            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'student_presence', id);
+            return deleteDoc(docRef);
+          });
+          await Promise.all(deletePromises);
+        } catch (e) {}
+
+        showNotification(`${idsToDelete.length} data pemantauan belum aktif berhasil dihapus.`);
       };
 
       const exportToExcel = (filteredScores) => {
@@ -1477,6 +1483,12 @@
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <button 
+                    onClick={handleDeleteInactiveMonitoring} 
+                    className="text-amber-400 hover:text-white flex items-center gap-1.5 text-xs font-semibold bg-amber-500/10 hover:bg-amber-600 border border-amber-500/20 px-3 py-2 rounded-xl transition-all"
+                  >
+                    <Trash2 className="w-4 h-4"/> Hapus Belum Aktif
+                  </button>
+                  <button 
                     onClick={handleDeleteClassMonitoring} 
                     disabled={filterClassGuru === 'semua'} 
                     className="text-red-400 hover:text-white disabled:opacity-50 flex items-center gap-1.5 text-xs font-semibold bg-red-500/10 hover:bg-red-600 border border-red-500/20 px-3 py-2 rounded-xl transition-all"
@@ -1540,7 +1552,7 @@
                           let badgeStyle = "bg-emerald-500/20 text-emerald-400 border-emerald-500/30";
                           if (p.status === 'Membuka Tab Lain') {
                             badgeStyle = "bg-amber-500/20 text-amber-400 border-amber-500/30";
-                          } else if (p.status === 'Selesai') {
+                          } else if (p.status === 'Selesai' || p.status === 'Belum Aktif') {
                             badgeStyle = "bg-red-500/20 text-red-400 border-red-500/30";
                           }
 
@@ -1567,8 +1579,8 @@
                                     <Play className="w-3.5 h-3.5" />
                                   </button>
                                   <button 
-                                    onClick={() => handleUpdateStatusMonitoring(p.id, 'Selesai')}
-                                    title="Hentikan / Set Selesai"
+                                    onClick={() => handleUpdateStatusMonitoring(p.id, 'Belum Aktif')}
+                                    title="Hentikan / Set Belum Aktif"
                                     className="p-1.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 border border-amber-500/30 rounded-lg transition-all"
                                   >
                                     <StopCircle className="w-3.5 h-3.5" />
@@ -1851,14 +1863,18 @@
 
               {/* LIST SOAL TERDISPLAI */}
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                <div className="flex justify-between items-center mb-4">
                   <h3 className="font-bold text-white text-sm">Daftar Soal Tersimpan ({matQuestions.length})</h3>
                   {matQuestions.length > 0 && (
                     <button 
-                      onClick={handleDeleteAllQuestionsInMaterial} 
-                      className="text-red-400 hover:text-white flex items-center gap-1.5 text-xs font-semibold bg-red-500/10 hover:bg-red-600 border border-red-500/20 px-3 py-1.5 rounded-xl transition-all self-start sm:self-auto"
+                      onClick={() => {
+                        if (window.confirm("Apakah Anda yakin ingin menghapus SELURUH soal tersimpan pada materi ini?")) {
+                          matQuestions.forEach(q => handleDeleteQuestion(q.id));
+                        }
+                      }}
+                      className="text-red-400 hover:text-red-300 text-xs font-semibold flex items-center gap-1 bg-red-500/10 px-3 py-1.5 rounded-xl border border-red-500/20 transition-all"
                     >
-                      <Trash2 className="w-3.5 h-3.5"/> Hapus Semua Soal
+                      <Trash2 className="w-3.5 h-3.5"/> Hapus Semua Soal Tersimpan
                     </button>
                   )}
                 </div>
@@ -1876,13 +1892,13 @@
                         <button 
                           onClick={() => handleDeleteQuestion(q.id)} 
                           title="Hapus Soal Ini"
-                          className="text-slate-500 hover:text-red-400 transition-colors p-1"
+                          className="text-slate-500 hover:text-red-400 transition-colors p-1 flex items-center gap-1 text-[11px] bg-red-500/10 hover:bg-red-500/20 px-2 py-1 rounded border border-red-500/20"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="w-3.5 h-3.5 text-red-400" /> <span className="text-red-400">Hapus</span>
                         </button>
                       </div>
 
-                      <div className="font-semibold text-slate-200 text-xs mb-3 pr-16 flex items-start gap-2">
+                      <div className="font-semibold text-slate-200 text-xs mb-3 pr-28 flex items-start gap-2">
                         <span className="text-blue-400 font-bold">{idx + 1}.</span>
                         <div className="flex-1"><RenderMathText text={q.questionText} /></div>
                       </div>
@@ -2080,24 +2096,22 @@
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="bg-slate-950 text-slate-400 border-b border-slate-800">
-                      <th className="p-4">No</th>
                       <th className="p-4">Nama Siswa</th>
                       <th className="p-4">Kelas</th>
-                      <th className="p-4">Materi</th>
+                      <th className="p-4">Materi Pembelajaran</th>
                       <th className="p-4">Nilai</th>
                       <th className="p-4 text-center">Aksi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800 text-slate-300">
-                    {filteredScores.map((s, idx) => (
-                      <tr key={s.id} className="hover:bg-slate-800/40">
-                        <td className="p-4 text-slate-500">{idx + 1}</td>
+                    {filteredScores.map((s) => (
+                      <tr key={s.id} className="hover:bg-slate-800/40 transition-colors">
                         <td className="p-4 font-bold text-white">{s.studentName}</td>
                         <td className="p-4">Kelas {s.kelas}-{s.subKelas}</td>
                         <td className="p-4">{s.materialTitle}</td>
                         <td className="p-4 font-bold text-blue-400">{s.score} / 100</td>
                         <td className="p-4 text-center">
-                          <button onClick={() => handleDeleteScore(s.id)} className="text-slate-500 hover:text-red-400 p-1">
+                          <button onClick={() => handleDeleteScore(s.id)} className="p-1.5 text-slate-500 hover:text-red-400 transition-colors">
                             <Trash2 className="w-4 h-4" />
                           </button>
                         </td>
@@ -2105,8 +2119,8 @@
                     ))}
                     {filteredScores.length === 0 && (
                       <tr>
-                        <td colSpan="6" className="p-8 text-center text-slate-500 italic">
-                          Belum ada data nilai pengerjaan soal untuk mapel {appSession.mapel}.
+                        <td colSpan="5" className="p-8 text-center text-slate-500 italic">
+                          Belum ada rekap nilai untuk filter yang dipilih.
                         </td>
                       </tr>
                     )}
@@ -2117,49 +2131,77 @@
           );
         }
 
+        // DEFAULT: DASHBOARD GURU
         return (
           <div className="space-y-6 max-w-6xl mx-auto">
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-              <div>
-                <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2.5 py-1 rounded-lg font-bold">
-                  PORTAL GURU • {appSession.mapel}
-                </span>
-                <h1 className="text-xl font-extrabold text-white mt-2">{appSession.fullName}</h1>
-                <p className="text-xs text-slate-400">NIP: {appSession.nip}</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl flex items-center justify-between">
+                <div>
+                  <p className="text-slate-400 text-xs">Total Materi ({appSession.mapel})</p>
+                  <h3 className="text-2xl font-extrabold text-white mt-1">{myTeacherMaterials.length}</h3>
+                </div>
+                <div className="p-3 bg-blue-600/10 text-blue-400 rounded-xl border border-blue-500/20">
+                  <BookOpen className="w-6 h-6"/>
+                </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                <button onClick={() => setActiveTab('tambah_materi')} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all flex items-center gap-1.5">
-                  <PlusCircle className="w-4 h-4"/> Terbitkan Materi Baru
-                </button>
-                <button onClick={() => setActiveTab('monitor')} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all flex items-center gap-1.5">
-                  <Radio className="w-4 h-4"/> Pantauan Membaca
-                </button>
-                <button onClick={() => setActiveTab('rekap_nilai')} className="bg-yellow-600 hover:bg-yellow-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all flex items-center gap-1.5">
-                  <Award className="w-4 h-4"/> Rekap Nilai
-                </button>
-                <button onClick={() => setActiveTab('upload_siswa')} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all flex items-center gap-1.5">
-                  <UserPlus className="w-4 h-4"/> Data Siswa
-                </button>
-                <button onClick={handleLogout} className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 px-3 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1">
-                  <LogOut className="w-4 h-4"/> Keluar
-                </button>
+              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl flex items-center justify-between">
+                <div>
+                  <p className="text-slate-400 text-xs">Aktivitas Membaca</p>
+                  <h3 className="text-2xl font-extrabold text-emerald-400 mt-1">
+                    {Object.values(liveMonitorData).filter(p => p.mapel === appSession.mapel).length}
+                  </h3>
+                </div>
+                <div className="p-3 bg-emerald-600/10 text-emerald-400 rounded-xl border border-emerald-500/20">
+                  <Radio className="w-6 h-6 animate-pulse"/>
+                </div>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl flex items-center justify-between">
+                <div>
+                  <p className="text-slate-400 text-xs">Siswa Terdaftar</p>
+                  <h3 className="text-2xl font-extrabold text-white mt-1">{students.length}</h3>
+                </div>
+                <div className="p-3 bg-purple-600/10 text-purple-400 rounded-xl border border-purple-500/20">
+                  <Users className="w-6 h-6"/>
+                </div>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl flex items-center justify-between">
+                <div>
+                  <p className="text-slate-400 text-xs">Nilai Terkumpul</p>
+                  <h3 className="text-2xl font-extrabold text-yellow-400 mt-1">
+                    {scores.filter(s => s.mapel === appSession.mapel).length}
+                  </h3>
+                </div>
+                <div className="p-3 bg-yellow-600/10 text-yellow-400 rounded-xl border border-yellow-500/20">
+                  <Award className="w-6 h-6"/>
+                </div>
               </div>
             </div>
 
-            <div className="space-y-4">
-              <h3 className="font-bold text-white text-sm flex items-center gap-2">
-                <BookOpen className="w-4 h-4 text-blue-500"/> Daftar Materi Terbitan Anda ({myTeacherMaterials.length})
-              </h3>
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-6 pb-4 border-b border-slate-800">
+                <div>
+                  <h3 className="font-bold text-white text-base">Materi Pembelajaran Saya ({appSession.mapel})</h3>
+                  <p className="text-slate-400 text-xs mt-0.5">Kelola materi dan latihan soal khusus mata pelajaran Anda</p>
+                </div>
+                <button 
+                  onClick={() => { setEditingMaterial(null); setActiveTab('tambah_materi'); }}
+                  className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition-all flex items-center gap-2 shadow-lg"
+                >
+                  <PlusCircle className="w-4 h-4"/> Terbitkan Materi Baru
+                </button>
+              </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {myTeacherMaterials.map(m => {
                   const qCount = questions.filter(q => q.materialId === m.id).length;
                   return (
-                    <div key={m.id} className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex flex-col justify-between shadow-lg">
+                    <div key={m.id} className="bg-slate-950 border border-slate-800 p-5 rounded-2xl flex flex-col justify-between">
                       <div>
                         {m.imageUrl && (
-                          <div className="h-36 bg-slate-950 overflow-hidden rounded-xl mb-3 flex items-center justify-center border border-slate-800/80">
+                          <div className="h-32 bg-slate-900 overflow-hidden rounded-xl mb-3 flex items-center justify-center">
                             <img 
                               src={getSafeImageUrl(m.imageUrl)} 
                               alt={m.title} 
@@ -2175,41 +2217,38 @@
                           </div>
                         )}
                         <div className="flex justify-between items-center">
-                          <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-lg font-bold">
+                          <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded font-bold">
                             Kelas {m.kelas} • Rombel {m.subKelasTarget}
                           </span>
-                          <span className="text-[10px] text-slate-400 flex items-center gap-1">
-                            <Clock className="w-3 h-3"/> {m.durationMinutes} Menit
+                          <span className="text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded font-bold">
+                            {m.durationMinutes} Mnt
                           </span>
                         </div>
+
                         <h4 className="font-bold text-white text-sm mt-2">{m.title}</h4>
-                        <div className="text-slate-400 text-xs line-clamp-2 mt-1">
-                          <RenderMathText text={m.content} />
-                        </div>
+                        <p className="text-slate-400 text-xs line-clamp-2 mt-1">{m.content}</p>
                       </div>
 
-                      <div className="mt-5 pt-4 border-t border-slate-800 flex items-center justify-between gap-2">
+                      <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-2">
                         <button 
-                          onClick={() => { setSelectedMaterial(m); setActiveTab('kelola_soal'); }} 
-                          className="bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+                          onClick={() => { setSelectedMaterial(m); setActiveTab('kelola_soal'); }}
+                          className="w-full bg-slate-900 hover:bg-slate-800 text-blue-400 border border-blue-500/20 font-bold py-2 rounded-xl text-xs transition-all flex items-center justify-center gap-1.5"
                         >
                           <List className="w-3.5 h-3.5"/> Kelola Soal ({qCount})
                         </button>
 
-                        <div className="flex items-center gap-1">
+                        <div className="flex gap-2">
                           <button 
-                            onClick={() => { setEditingMaterial(m); setActiveTab('edit_materi'); }} 
-                            className="p-2 bg-slate-950 hover:bg-slate-800 text-amber-400 rounded-xl border border-slate-800 transition-all"
-                            title="Edit Materi"
+                            onClick={() => { setEditingMaterial(m); setActiveTab('edit_materi'); }}
+                            className="flex-1 bg-slate-900 hover:bg-slate-800 text-slate-300 font-bold py-2 rounded-xl text-xs transition-all flex items-center justify-center gap-1 border border-slate-800"
                           >
-                            <Edit className="w-4 h-4"/>
+                            <Edit className="w-3.5 h-3.5"/> Edit
                           </button>
                           <button 
-                            onClick={() => handleDeleteMaterial(m.id)} 
-                            className="p-2 bg-slate-950 hover:bg-slate-800 text-red-400 rounded-xl border border-slate-800 transition-all"
-                            title="Hapus Materi"
+                            onClick={() => handleDeleteMaterial(m.id)}
+                            className="bg-red-500/10 hover:bg-red-500/20 text-red-400 font-bold px-3 py-2 rounded-xl text-xs transition-all border border-red-500/20"
                           >
-                            <Trash2 className="w-4 h-4"/>
+                            <Trash2 className="w-3.5 h-3.5"/>
                           </button>
                         </div>
                       </div>
@@ -2218,8 +2257,8 @@
                 })}
 
                 {myTeacherMaterials.length === 0 && (
-                  <div className="col-span-full p-8 text-center text-slate-500 bg-slate-900/50 rounded-2xl border border-slate-800 text-xs">
-                    Anda belum menerbitkan materi untuk Mata Pelajaran <strong className="text-white">{appSession.mapel}</strong>. Klik tombol "Terbitkan Materi Baru" untuk membuat materi.
+                  <div className="col-span-full p-8 text-center text-slate-500 bg-slate-950 rounded-2xl border border-slate-800 text-xs">
+                    Belum ada materi pembelajaran yang dibuat untuk mapel <strong className="text-white">{appSession.mapel}</strong>.
                   </div>
                 )}
               </div>
@@ -2229,10 +2268,58 @@
       };
 
       return (
-        <div className="min-h-screen bg-slate-950 text-slate-100 p-4 sm:p-6">
+        <div className="min-h-screen bg-slate-950 text-slate-100 p-4">
+          <header className="max-w-6xl mx-auto flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-900 border border-slate-800 p-4 rounded-2xl mb-6 gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="font-extrabold text-white text-base">{appSession.fullName}</h1>
+                <span className="text-[10px] bg-blue-600 text-white font-bold px-2 py-0.5 rounded-full">{appSession.mapel}</span>
+              </div>
+              <p className="text-slate-400 text-xs">NIP: {appSession.nip}</p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button 
+                onClick={() => setActiveTab('dashboard')} 
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${activeTab === 'dashboard' ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'}`}
+              >
+                <LayoutDashboard className="w-3.5 h-3.5"/> Dashboard
+              </button>
+              
+              <button 
+                onClick={() => setActiveTab('monitor')} 
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${activeTab === 'monitor' ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'}`}
+              >
+                <Radio className="w-3.5 h-3.5 text-emerald-400"/> Pemantauan Realtime
+              </button>
+
+              <button 
+                onClick={() => setActiveTab('upload_siswa')} 
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${activeTab === 'upload_siswa' ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'}`}
+              >
+                <UserPlus className="w-3.5 h-3.5"/> Database Siswa
+              </button>
+
+              <button 
+                onClick={() => setActiveTab('rekap_nilai')} 
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${activeTab === 'rekap_nilai' ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'}`}
+              >
+                <Award className="w-3.5 h-3.5 text-yellow-400"/> Rekap Nilai
+              </button>
+
+              <button 
+                onClick={handleLogout} 
+                className="text-red-400 hover:text-red-300 text-xs font-semibold flex items-center gap-1 bg-red-500/10 px-3 py-2 rounded-xl border border-red-500/20 ml-2"
+              >
+                <LogOut className="w-3.5 h-3.5"/> Keluar
+              </button>
+            </div>
+          </header>
+
           {notification && (
-            <div className="fixed top-4 right-4 z-50 bg-blue-600 text-white font-bold px-4 py-3 rounded-2xl shadow-2xl text-xs flex items-center gap-2 animate-bounce">
-              <CheckCircle className="w-4 h-4" /> {notification}
+            <div className="max-w-6xl mx-auto mb-4 bg-blue-600/20 border border-blue-500/30 text-blue-300 px-4 py-3 rounded-2xl text-xs flex justify-between items-center">
+              <span>{notification}</span>
+              <button onClick={() => setNotification(null)}><X className="w-4 h-4"/></button>
             </div>
           )}
 
