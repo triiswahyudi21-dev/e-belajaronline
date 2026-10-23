@@ -82,7 +82,7 @@
     import { 
       BookOpen, Users, LogIn, FileText, PlusCircle, CheckCircle, 
       Award, ArrowLeft, LogOut, List, Trash2, Filter, Lock, UserPlus,
-      Clock, AlertTriangle, RefreshCw, Radio, Download, LayoutDashboard, StopCircle, User, Edit, Image, Code, FileSpreadsheet, Play, Power, AlertCircle, X, Home, BookMarked, Gamepad2, ExternalLink, Save
+      Clock, AlertTriangle, RefreshCw, Radio, Download, LayoutDashboard, StopCircle, User, Edit, Image, Code, FileSpreadsheet, Play, Power, AlertCircle, X, Home, BookMarked, Gamepad2, ExternalLink, Save, Send, CheckSquare
     } from 'lucide-react';
 
     const MAPEL_LIST = [
@@ -154,6 +154,7 @@
         source: 'Buku Paket IPS SMP Kelas 7 Bab 1',
         createdBy: 'Dra. Hj. Siti Rahmah, M.Pd.',
         nipGuru: '197508122000032001',
+        isAssigned: true,
         createdAt: Date.now()
       },
       {
@@ -170,6 +171,7 @@
         source: 'Buku Paket Matematika Kelas 8',
         createdBy: 'Bambang Gunawan, S.Pd., M.Si.',
         nipGuru: '198203152005011002',
+        isAssigned: true,
         createdAt: Date.now() - 86400000
       }
     ];
@@ -346,54 +348,45 @@
 
         const hasIsian = currentQuestions.some(q => q.type === 'isian');
 
-        let scoreData = {};
-        const scoreId = `${studentSession.id}_${activeMaterial.id}`;
+        let questionScores = {};
+        let correctCount = 0;
 
-        if (!hasIsian) {
-          let correctCount = 0;
-          currentQuestions.forEach(q => {
-            const ans = (userAnswers[q.id] || '').trim().toLowerCase();
+        currentQuestions.forEach(q => {
+          const ans = (userAnswers[q.id] || '').trim().toLowerCase();
+          if (q.type === 'pg') {
             const target = (q.correctAnswer || '').trim().toLowerCase();
             if (ans === target) {
               correctCount++;
+              questionScores[q.id] = 100;
+            } else {
+              questionScores[q.id] = 0;
             }
-          });
+          }
+        });
 
-          const calculatedScore = Math.round((correctCount / currentQuestions.length) * 100);
+        const calculatedScore = hasIsian 
+          ? null 
+          : Math.round((correctCount / currentQuestions.length) * 100);
 
-          scoreData = {
-            id: scoreId,
-            studentId: studentSession.id,
-            studentName: studentSession.name,
-            kelas: studentSession.kelas,
-            subKelas: studentSession.subKelas,
-            materialId: activeMaterial.id,
-            materialTitle: activeMaterial.title,
-            mapel: activeMaterial.mapel || 'UMUM',
-            score: calculatedScore,
-            totalQuestions: currentQuestions.length,
-            correctAnswers: correctCount,
-            userAnswers: userAnswers,
-            statusGrade: 'graded',
-            submittedAt: Date.now()
-          };
-        } else {
-          scoreData = {
-            id: scoreId,
-            studentId: studentSession.id,
-            studentName: studentSession.name,
-            kelas: studentSession.kelas,
-            subKelas: studentSession.subKelas,
-            materialId: activeMaterial.id,
-            materialTitle: activeMaterial.title,
-            mapel: activeMaterial.mapel || 'UMUM',
-            score: null,
-            totalQuestions: currentQuestions.length,
-            userAnswers: userAnswers,
-            statusGrade: 'pending',
-            submittedAt: Date.now()
-          };
-        }
+        const scoreId = `${studentSession.id}_${activeMaterial.id}`;
+
+        const scoreData = {
+          id: scoreId,
+          studentId: studentSession.id,
+          studentName: studentSession.name,
+          kelas: studentSession.kelas,
+          subKelas: studentSession.subKelas,
+          materialId: activeMaterial.id,
+          materialTitle: activeMaterial.title,
+          mapel: activeMaterial.mapel || 'UMUM',
+          score: calculatedScore,
+          totalQuestions: currentQuestions.length,
+          correctAnswers: correctCount,
+          userAnswers: userAnswers,
+          questionScores: questionScores,
+          statusGrade: hasIsian ? 'pending' : 'graded',
+          submittedAt: Date.now()
+        };
 
         try {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'scores', scoreData.id);
@@ -471,9 +464,11 @@
         );
       }
 
+      // HANYA TAMPILKAN MATERI YANG DITUGASKAN OLEH GURU (isAssigned === true)
       const filteredMaterialsForStudent = materials.filter(m => 
         String(m.kelas) === String(studentSession.kelas) && 
-        (m.mapel === selectedMapel)
+        (m.mapel === selectedMapel) &&
+        (m.isAssigned === true)
       );
 
       const activeMaterialQuestions = activeMaterial 
@@ -530,7 +525,10 @@
 
               <div className="flex justify-between items-center border-b border-slate-800 pb-4">
                 <div>
-                  <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded font-bold">{activeMaterial.mapel}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded font-bold">{activeMaterial.mapel}</span>
+                    <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded font-bold">📌 Ditugaskan</span>
+                  </div>
                   <h1 className="text-lg font-bold text-white mt-1">{activeMaterial.title}</h1>
                   <p className="text-xs text-slate-400">Pengajar: {activeMaterial.createdBy}</p>
                 </div>
@@ -584,7 +582,7 @@
                 <RenderMathText text={activeMaterial.content} />
               </div>
 
-              {/* GAME INTERAKTIF (LINK BUKA TAB BARU) */}
+              {/* GAME INTERAKTIF */}
               {activeMaterial.gameUrl && (
                 <div className="bg-slate-950 border border-purple-500/30 rounded-2xl p-4 flex items-center justify-between gap-4">
                   <div className="flex items-center gap-3">
@@ -618,7 +616,7 @@
                 </div>
               )}
 
-              {/* SOAL EVALUASI LANGSUNG DI BAWAH MATERI */}
+              {/* SOAL EVALUASI */}
               <div className="pt-6 border-t border-slate-800 space-y-6">
                 <div className="flex items-center gap-2">
                   <List className="w-5 h-5 text-emerald-400" />
@@ -630,7 +628,7 @@
                     <Award className="w-16 h-16 text-emerald-400 mx-auto animate-bounce" />
                     <h3 className="text-xl font-bold text-white">Jawaban Berhasil Terkirim!</h3>
                     <p className="text-xs text-slate-400 max-w-md mx-auto">
-                      Jawaban Anda telah tersimpan di rekap nilai. Jika terdapat soal isian, nilai akan diinput oleh guru secara manual. Anda dapat mengecek pembaruan nilai secara berkala pada halaman materi ini.
+                      Jawaban Anda telah tersimpan di rekap nilai. Jika terdapat soal isian/uraian, nilai akan diinput oleh guru secara manual per soal.
                     </p>
                     <button 
                       onClick={handleFinishReading}
@@ -753,10 +751,15 @@
                             />
                           </div>
                         )}
-                        <div className="flex justify-between items-center">
-                          <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-lg font-bold">
-                            {m.mapel} • Kelas {m.kelas}
-                          </span>
+                        <div className="flex justify-between items-center gap-2 flex-wrap">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-lg font-bold">
+                              {m.mapel} • Kelas {m.kelas}
+                            </span>
+                            <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-lg font-bold">
+                              📌 Ditugaskan
+                            </span>
+                          </div>
                           {myScore && myScore.score !== null && myScore.score !== undefined && (
                             <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-lg font-bold flex items-center gap-1">
                               Nilai: {myScore.score}
@@ -783,7 +786,7 @@
 
                 {filteredMaterialsForStudent.length === 0 && (
                   <div className="col-span-full p-8 text-center text-slate-500 bg-slate-900/50 rounded-2xl border border-slate-800 text-xs">
-                    Belum ada materi terbit untuk Mata Pelajaran <strong className="text-white">{selectedMapel}</strong> di Kelas {studentSession.kelas}.
+                    Belum ada materi terbit/ditugaskan untuk Mata Pelajaran <strong className="text-white">{selectedMapel}</strong> di Kelas {studentSession.kelas}.
                   </div>
                 )}
               </div>
@@ -890,13 +893,14 @@
 
       const [manageStudentClass, setManageStudentClass] = useState('7');
       const [manageStudentSubClass, setManageStudentSubClass] = useState('A');
+      
       const [filterClassGuru, setFilterClassGuru] = useState('semua');
       const [filterSubClassGuru, setFilterSubClassGuru] = useState('semua');
+      const [filterMaterialGuru, setFilterMaterialGuru] = useState('semua');
 
       const [rekapFilterClass, setRekapFilterClass] = useState('semua');
       const [rekapFilterSubClass, setRekapFilterSubClass] = useState('semua');
-
-      const [manualScoresInput, setManualScoresInput] = useState({});
+      const [rekapFilterMaterial, setRekapFilterMaterial] = useState('semua');
 
       useEffect(() => {
         if (editingQuestion) {
@@ -1009,6 +1013,64 @@
         setEditingQuestion(null);
       };
 
+      const handleToggleAssignMaterial = async (mat) => {
+        const newStatus = !mat.isAssigned;
+        const updatedMat = { 
+          ...mat, 
+          isAssigned: newStatus, 
+          assignedAt: newStatus ? Date.now() : null 
+        };
+
+        setMaterials(prev => prev.map(m => m.id === mat.id ? updatedMat : m));
+
+        try {
+          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'materials', mat.id);
+          await setDoc(docRef, updatedMat, { merge: true });
+        } catch (err) {}
+
+        showNotification(
+          newStatus 
+            ? `Materi "${mat.title}" DITUGASKAN ke siswa Kelas ${mat.kelas}!` 
+            : `Penugasan materi "${mat.title}" DIBATALKAN.`
+        );
+      };
+
+      // FUNGSI SIMPAN NILAI PER BUTIR SOAL & HITUNG TOTAL OTOMATIS
+      const handleSavePerQuestionScore = async (scoreItem, qId, value) => {
+        const numVal = value === '' ? null : Math.min(100, Math.max(0, parseInt(value) || 0));
+        const currentQScores = scoreItem.questionScores || {};
+        const updatedQScores = { ...currentQScores, [qId]: numVal };
+
+        const matQs = questions.filter(q => q.materialId === scoreItem.materialId);
+        
+        let totalSum = 0;
+
+        matQs.forEach(q => {
+          const val = updatedQScores[q.id];
+          if (val !== undefined && val !== null) {
+            totalSum += Number(val);
+          }
+        });
+
+        const calculatedTotal = matQs.length > 0 ? Math.round(totalSum / matQs.length) : 0;
+        const isAllGraded = matQs.every(q => updatedQScores[q.id] !== undefined && updatedQScores[q.id] !== null);
+
+        const updatedScoreObj = {
+          ...scoreItem,
+          questionScores: updatedQScores,
+          score: calculatedTotal,
+          statusGrade: isAllGraded ? 'graded' : 'pending',
+          gradedAt: Date.now()
+        };
+
+        setScores(prev => prev.map(s => s.id === scoreItem.id ? updatedScoreObj : s));
+
+        try {
+          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'scores', scoreItem.id);
+          await setDoc(docRef, updatedScoreObj, { merge: true });
+        } catch (e) {}
+      };
+
       const handleCreateMaterial = async (e) => {
         e.preventDefault();
         const formData = new FormData(e.target);
@@ -1042,6 +1104,7 @@
           source,
           createdBy: appSession.fullName,
           nipGuru: appSession.nip,
+          isAssigned: true,
           createdAt: Date.now()
         };
 
@@ -1050,7 +1113,7 @@
         try {
           const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'materials', newMat.id);
           await setDoc(docRef, newMat);
-          showNotification(`Materi "${title}" berhasil diterbitkan untuk Mapel ${appSession.mapel}!`);
+          showNotification(`Materi "${title}" berhasil diterbitkan & ditugaskan!`);
         } catch (err) {
           showNotification(`Materi tersimpan di penyimpanan lokal.`);
         }
@@ -1267,31 +1330,6 @@
         showNotification("Data nilai berhasil dihapus.");
       };
 
-      const handleSaveManualScore = async (scoreItem) => {
-        const val = manualScoresInput[scoreItem.id];
-        if (val === undefined || val === '') {
-          showNotification("Masukkan angka nilai terlebih dahulu!");
-          return;
-        }
-
-        const numScore = Math.min(100, Math.max(0, parseInt(val) || 0));
-
-        const updatedScoreObj = {
-          ...scoreItem,
-          score: numScore,
-          statusGrade: 'graded',
-          gradedAt: Date.now()
-        };
-
-        setScores(prev => prev.map(s => s.id === scoreItem.id ? updatedScoreObj : s));
-
-        try {
-          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'scores', scoreItem.id);
-          await setDoc(docRef, updatedScoreObj, { merge: true });
-          showNotification(`Nilai untuk ${scoreItem.studentName} berhasil disimpan: ${numScore}`);
-        } catch (e) {}
-      };
-
       const handleDeleteClassScores = async () => {
         if (rekapFilterClass === 'semua') {
           showNotification("Pilih kelas tertentu terlebih dahulu untuk menghapus nilai kelas!");
@@ -1307,7 +1345,8 @@
           const matchMapel = s.mapel === appSession.mapel;
           const matchClass = String(s.kelas) === String(rekapFilterClass);
           const matchSubClass = rekapFilterSubClass === 'semua' || s.subKelas === rekapFilterSubClass;
-          return matchMapel && matchClass && matchSubClass;
+          const matchMaterial = rekapFilterMaterial === 'semua' || s.materialId === rekapFilterMaterial;
+          return matchMapel && matchClass && matchSubClass && matchMaterial;
         });
 
         if (targetScores.length === 0) {
@@ -1419,7 +1458,8 @@
           const matchMapel = p.mapel === appSession.mapel;
           const matchClass = String(p.kelas) === String(filterClassGuru);
           const matchSubClass = filterSubClassGuru === 'semua' || p.subKelas === filterSubClassGuru;
-          return matchMapel && matchClass && matchSubClass;
+          const matchMaterial = filterMaterialGuru === 'semua' || p.materialId === filterMaterialGuru;
+          return matchMapel && matchClass && matchSubClass && matchMaterial;
         });
 
         if (targetPresences.length === 0) {
@@ -1450,7 +1490,8 @@
           const matchMapel = p.mapel === appSession.mapel;
           const matchClass = filterClassGuru === 'semua' || String(p.kelas) === String(filterClassGuru);
           const matchSubClass = filterSubClassGuru === 'semua' || p.subKelas === filterSubClassGuru;
-          return matchMapel && matchClass && matchSubClass && (p.status === 'Belum Aktif' || p.status === 'Selesai');
+          const matchMaterial = filterMaterialGuru === 'semua' || p.materialId === filterMaterialGuru;
+          return matchMapel && matchClass && matchSubClass && matchMaterial && (p.status === 'Belum Aktif' || p.status === 'Selesai');
         });
 
         if (inactivePresences.length === 0) {
@@ -1489,7 +1530,7 @@
           let jawabanText = '-';
           if (s.userAnswers && Object.keys(s.userAnswers).length > 0) {
             if (matQs.length > 0) {
-              jawabanText = matQs.map((q, qIdx) => `Soal ${qIdx + 1} (${q.type === 'pg' ? 'PG' : 'Isian'}): ${s.userAnswers[q.id] || '-'}`).join(' | ');
+              jawabanText = matQs.map((q, qIdx) => `Soal ${qIdx + 1} (${q.type === 'pg' ? 'PG' : 'Isian'}): ${s.userAnswers[q.id] || '-'} [Nilai: ${s.questionScores?.[q.id] ?? '-'}]`).join(' | ');
             } else {
               jawabanText = Object.entries(s.userAnswers).map(([qId, ans], qIdx) => `Jawaban ${qIdx + 1}: ${ans || '-'}`).join(' | ');
             }
@@ -1501,14 +1542,14 @@
             'Kelas': s.kelas ? `Kelas ${s.kelas}-${s.subKelas}` : '-',
             'Mata Pelajaran': s.mapel || '-',
             'Judul Materi': s.materialTitle || '-',
-            'Jawaban Siswa': jawabanText,
-            'Nilai Akhir': s.score ?? 'Belum Dinilai',
+            'Jawaban Siswa & Nilai Per Soal': jawabanText,
+            'Nilai Akhir Total': s.score ?? 'Belum Dinilai',
             'Keterangan': s.score !== null && s.score !== undefined ? (s.score >= 70 ? 'Lulus' : 'Remidial') : 'Perlu Koreksi Manual'
           };
         });
 
         const worksheet = XLSX.utils.json_to_sheet(excelData);
-        worksheet['!cols'] = [{ wch: 6 }, { wch: 28 }, { wch: 12 }, { wch: 18 }, { wch: 35 }, { wch: 40 }, { wch: 15 }, { wch: 18 }];
+        worksheet['!cols'] = [{ wch: 6 }, { wch: 28 }, { wch: 12 }, { wch: 18 }, { wch: 35 }, { wch: 45 }, { wch: 18 }, { wch: 18 }];
 
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, 'Rekap Nilai');
@@ -1591,7 +1632,8 @@
               const matchMapel = p.mapel === appSession.mapel;
               const matchClass = filterClassGuru === 'semua' || String(p.kelas) === String(filterClassGuru);
               const matchSubClass = filterSubClassGuru === 'semua' || p.subKelas === filterSubClassGuru;
-              return matchMapel && matchClass && matchSubClass;
+              const matchMaterial = filterMaterialGuru === 'semua' || p.materialId === filterMaterialGuru;
+              return matchMapel && matchClass && matchSubClass && matchMaterial;
             })
             .sort((a, b) => (a.studentName || '').localeCompare(b.studentName || ''));
 
@@ -1649,6 +1691,22 @@
                       {r === 'semua' ? 'Semua' : r}
                     </button>
                   ))}
+                </div>
+
+                <div className="flex items-center gap-2 border-l border-slate-800 pl-4">
+                  <span className="text-slate-400">Materi Ditugaskan:</span>
+                  <select 
+                    value={filterMaterialGuru} 
+                    onChange={(e) => setFilterMaterialGuru(e.target.value)}
+                    className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-blue-500 max-w-[220px] truncate"
+                  >
+                    <option value="semua">Semua Materi</option>
+                    {myTeacherMaterials.map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.isAssigned !== false ? '📌 ' : ''}Kelas {m.kelas} - {m.title}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -1808,7 +1866,7 @@
                 </div>
 
                 <button type="submit" className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-8 rounded-xl transition-all shadow-lg text-xs">
-                  {isEdit ? 'Simpan Perubahan Materi' : 'Terbitkan Materi'}
+                  {isEdit ? 'Simpan Perubahan Materi' : 'Terbitkan & Tugaskan Materi'}
                 </button>
               </form>
             </div>
@@ -1832,7 +1890,7 @@
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* MODUL 1: INPUT / EDIT SATU SOAL */}
+                  {/* INPUT / EDIT SATU SOAL */}
                   <form key={editingQuestion ? editingQuestion.id : 'new_question'} onSubmit={handleSaveQuestion} className={`space-y-3 bg-slate-950 p-4 rounded-xl border ${editingQuestion ? 'border-amber-500/50 bg-amber-500/5' : 'border-slate-800'}`}>
                     <div className="flex items-center justify-between">
                       <h3 className="font-bold text-white text-xs flex items-center gap-1.5">
@@ -1890,7 +1948,7 @@
                           className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2 text-xs text-white focus:border-blue-500 outline-none"
                         >
                           <option value="pg">Pilihan Ganda</option>
-                          <option value="isian">Isian Singkat (Penilaian Manual Guru)</option>
+                          <option value="isian">Isian Singkat / Uraian</option>
                         </select>
                       </div>
 
@@ -1952,7 +2010,7 @@
                     </button>
                   </form>
 
-                  {/* MODUL 2: BATCH COPY-PASTE SOAL MASSAL */}
+                  {/* BATCH COPY-PASTE SOAL MASSAL */}
                   <form onSubmit={handleBatchPasteQuestions} className="space-y-3 bg-slate-950 p-4 rounded-xl border border-slate-800 flex flex-col justify-between">
                     <div>
                       <h3 className="font-bold text-white text-xs flex items-center gap-1.5"><FileSpreadsheet className="w-4 h-4 text-blue-400"/> Upload Soal Massal (Copy-Paste)</h3>
@@ -2049,7 +2107,7 @@
                         </div>
                       ) : (
                         <div className="mt-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs text-amber-400 font-semibold">
-                          Tipe: Soal Isian (Siswa menjawab isian singkat tanpa kunci otomatis. Diisi & dinilai manual oleh guru direkap).
+                          Tipe: Soal Isian/Uraian (Diisi & dinilai per soal secara manual oleh guru di rekap nilai).
                         </div>
                       )}
                     </div>
@@ -2153,7 +2211,8 @@
             const matchMapel = s.mapel === appSession.mapel;
             const matchClass = rekapFilterClass === 'semua' || String(s.kelas) === String(rekapFilterClass);
             const matchSubClass = rekapFilterSubClass === 'semua' || s.subKelas === rekapFilterSubClass;
-            return matchMapel && matchClass && matchSubClass;
+            const matchMaterial = rekapFilterMaterial === 'semua' || s.materialId === rekapFilterMaterial;
+            return matchMapel && matchClass && matchSubClass && matchMaterial;
           });
 
           return (
@@ -2161,7 +2220,7 @@
               <div className="p-4 sm:p-6 border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                   <h2 className="text-lg font-bold text-white flex items-center gap-2"><Award className="text-yellow-500"/> Rekap Nilai Evaluasi & Penilaian Manual - {appSession.mapel}</h2>
-                  <p className="text-xs text-slate-400 mt-1">Lakukan koreksi/entry nilai manual untuk jawaban isian dan unduh rekap nilai ke Excel (.xlsx)</p>
+                  <p className="text-xs text-slate-400 mt-1">Input nilai manual per butir soal uraian/essai. Total nilai akan terhitung secara otomatis.</p>
                 </div>
                 
                 <div className="flex flex-wrap items-center gap-2">
@@ -2187,22 +2246,43 @@
                 </div>
               </div>
 
-              <div className="p-4 bg-slate-950/70 border-b border-slate-800 flex flex-wrap items-center gap-3 text-xs">
-                <span className="text-slate-400 font-semibold">Filter:</span>
-                <select value={rekapFilterClass} onChange={(e) => setRekapFilterClass(e.target.value)} className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-white">
-                  <option value="semua">Semua Kelas</option>
-                  <option value="7">Kelas 7</option>
-                  <option value="8">Kelas 8</option>
-                  <option value="9">Kelas 9</option>
-                </select>
+              <div className="p-4 bg-slate-950/70 border-b border-slate-800 flex flex-wrap items-center gap-4 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400 font-semibold">Kelas:</span>
+                  <select value={rekapFilterClass} onChange={(e) => setRekapFilterClass(e.target.value)} className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-white">
+                    <option value="semua">Semua Kelas</option>
+                    <option value="7">Kelas 7</option>
+                    <option value="8">Kelas 8</option>
+                    <option value="9">Kelas 9</option>
+                  </select>
+                </div>
 
-                <select value={rekapFilterSubClass} onChange={(e) => setRekapFilterSubClass(e.target.value)} className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-white">
-                  <option value="semua">Semua Rombel</option>
-                  <option value="A">A</option>
-                  <option value="B">B</option>
-                  <option value="C">C</option>
-                  <option value="D">D</option>
-                </select>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400 font-semibold">Rombel:</span>
+                  <select value={rekapFilterSubClass} onChange={(e) => setRekapFilterSubClass(e.target.value)} className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-white">
+                    <option value="semua">Semua Rombel</option>
+                    <option value="A">A</option>
+                    <option value="B">B</option>
+                    <option value="C">C</option>
+                    <option value="D">D</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2 border-l border-slate-800 pl-4">
+                  <span className="text-slate-400 font-semibold">Materi Ditugaskan:</span>
+                  <select 
+                    value={rekapFilterMaterial} 
+                    onChange={(e) => setRekapFilterMaterial(e.target.value)} 
+                    className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-white max-w-[250px] truncate"
+                  >
+                    <option value="semua">Semua Materi Ditugaskan</option>
+                    {myTeacherMaterials.map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.isAssigned !== false ? '📌 ' : ''}Kelas {m.kelas} - {m.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="overflow-x-auto">
@@ -2213,8 +2293,8 @@
                       <th className="p-4">Nama Siswa</th>
                       <th className="p-4">Kelas</th>
                       <th className="p-4">Judul Materi</th>
-                      <th className="p-4">Jawaban Siswa / Essai</th>
-                      <th className="p-4">Nilai / Penilaian Manual</th>
+                      <th className="p-4">Jawaban Siswa & Input Nilai Per Soal Uraian</th>
+                      <th className="p-4">Total Nilai Otomatis</th>
                       <th className="p-4 text-center">Aksi</th>
                     </tr>
                   </thead>
@@ -2229,20 +2309,36 @@
                           <td className="p-4">{s.materialTitle}</td>
                           <td className="p-4">
                             {s.userAnswers && Object.keys(s.userAnswers).length > 0 ? (
-                              <div className="space-y-1.5 max-w-xs">
+                              <div className="space-y-2 max-w-sm">
                                 {matQs.length > 0 ? (
                                   matQs.map((q, qIdx) => {
                                     const ans = s.userAnswers[q.id];
+                                    const currentScoreVal = s.questionScores && s.questionScores[q.id] !== undefined ? s.questionScores[q.id] : '';
+
                                     return (
-                                      <div key={q.id || qIdx} className="bg-slate-950/70 p-2 rounded-lg border border-slate-800 text-[11px]">
-                                        <div className="flex items-center justify-between gap-1 mb-1">
-                                          <span className="font-bold text-blue-400">Soal {qIdx + 1} ({q.type === 'pg' ? 'PG' : 'Isian/Essai'})</span>
+                                      <div key={q.id || qIdx} className="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800 text-[11px] space-y-1.5">
+                                        <div className="flex items-center justify-between gap-1">
+                                          <span className="font-bold text-blue-400">Soal {qIdx + 1} ({q.type === 'pg' ? 'PG' : 'Isian/Uraian'})</span>
                                           {q.type === 'pg' && (
                                             <span className="text-[10px] text-slate-400">Kunci: {q.correctAnswer}</span>
                                           )}
                                         </div>
                                         <div className="text-slate-200">
                                           <RenderMathText text={ans || '(Belum dijawab)'} />
+                                        </div>
+                                        
+                                        {/* INPUT NILAI PER SOAL URAIAN / PG */}
+                                        <div className="pt-1.5 flex items-center justify-between gap-2 border-t border-slate-800/80">
+                                          <span className="text-[10px] text-slate-400 font-semibold">Nilai Soal Ini (0-100):</span>
+                                          <input 
+                                            type="number" 
+                                            min="0" 
+                                            max="100"
+                                            placeholder="0-100" 
+                                            value={currentScoreVal ?? ''}
+                                            onChange={(e) => handleSavePerQuestionScore(s, q.id, e.target.value)}
+                                            className="w-16 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-amber-300 font-bold text-center focus:border-blue-500 outline-none"
+                                          />
                                         </div>
                                       </div>
                                     );
@@ -2263,29 +2359,14 @@
                             )}
                           </td>
                           <td className="p-4">
-                            {s.score !== null && s.score !== undefined ? (
-                              <span className="font-extrabold text-amber-400 text-sm bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-lg">
-                                {s.score} / 100
+                            <div className="flex flex-col items-start gap-1">
+                              <span className="font-extrabold text-amber-400 text-sm bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-xl shadow-inner">
+                                {s.score !== null && s.score !== undefined ? `${s.score} / 100` : 'Belum Lengkap'}
                               </span>
-                            ) : (
-                              <div className="flex items-center gap-2">
-                                <input 
-                                  type="number" 
-                                  min="0" 
-                                  max="100"
-                                  placeholder="0-100" 
-                                  value={manualScoresInput[s.id] ?? ''}
-                                  onChange={(e) => setManualScoresInput(prev => ({ ...prev, [s.id]: e.target.value }))}
-                                  className="w-20 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:border-blue-500 outline-none font-bold"
-                                />
-                                <button 
-                                  onClick={() => handleSaveManualScore(s)}
-                                  className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 text-xs shadow-md"
-                                >
-                                  <Save className="w-3.5 h-3.5" /> Simpan
-                                </button>
-                              </div>
-                            )}
+                              <span className="text-[10px] text-slate-400 font-semibold">
+                                {s.statusGrade === 'graded' ? '✓ Selesai Dinilai' : '⏳ Menunggu Koreksi'}
+                              </span>
+                            </div>
                           </td>
                           <td className="p-4 text-center">
                             <button 
@@ -2313,6 +2394,7 @@
           );
         }
 
+        /* DASHBOARD UTAMA (DEFAULT RETURN) */
         return (
           <div className="space-y-6 max-w-6xl mx-auto">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -2382,18 +2464,31 @@
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {myTeacherMaterials.map(m => {
                   const qCount = questions.filter(q => q.materialId === m.id).length;
+                  const isAssigned = m.isAssigned !== false;
+
                   return (
                     <div key={m.id} className="bg-slate-950 border border-slate-800 p-4 rounded-xl flex flex-col justify-between space-y-3">
                       <div>
-                        <div className="flex justify-between items-start">
-                          <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded font-bold">
-                            Kelas {m.kelas} ({m.subKelasTarget}) • {m.durationMinutes} Menit
-                          </span>
+                        <div className="flex justify-between items-start gap-2 flex-wrap">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded font-bold">
+                              Kelas {m.kelas} ({m.subKelasTarget}) • {m.durationMinutes} Menit
+                            </span>
+                            {isAssigned ? (
+                              <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded font-bold">
+                                📌 Ditugaskan (Muncul di Siswa)
+                              </span>
+                            ) : (
+                              <span className="text-[10px] bg-slate-800 text-slate-400 border border-slate-700 px-2 py-0.5 rounded font-bold">
+                                Draft / Sembunyi dari Siswa
+                              </span>
+                            )}
+                          </div>
                           <div className="flex items-center gap-1">
-                            <button onClick={() => { setEditingMaterial(m); setActiveTab('edit_materi'); }} className="p-1 text-slate-400 hover:text-amber-400 transition-colors">
+                            <button onClick={() => { setEditingMaterial(m); setActiveTab('edit_materi'); }} className="p-1 text-slate-400 hover:text-amber-400 transition-colors" title="Edit Materi">
                               <Edit className="w-4 h-4" />
                             </button>
-                            <button onClick={() => handleDeleteMaterial(m.id)} className="p-1 text-slate-400 hover:text-red-400 transition-colors">
+                            <button onClick={() => handleDeleteMaterial(m.id)} className="p-1 text-slate-400 hover:text-red-400 transition-colors" title="Hapus Materi">
                               <Trash2 className="w-4 h-4" />
                             </button>
                           </div>
@@ -2404,14 +2499,50 @@
                         </div>
                       </div>
 
-                      <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
-                        <span className="text-xs text-slate-400 font-medium">Soal Tersimpan: <strong className="text-emerald-400">{qCount} Soal</strong></span>
-                        <button 
-                          onClick={() => { setSelectedMaterial(m); setActiveTab('kelola_soal'); }} 
-                          className="bg-slate-800 hover:bg-slate-700 text-blue-400 border border-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
-                        >
-                          <List className="w-3.5 h-3.5" /> Kelola Soal
-                        </button>
+                      <div className="pt-3 border-t border-slate-800 space-y-2">
+                        <div className="flex items-center justify-between text-xs text-slate-400">
+                          <span>Soal: <strong className="text-emerald-400">{qCount} Soal</strong></span>
+                          <button 
+                            onClick={() => { setSelectedMaterial(m); setActiveTab('kelola_soal'); }} 
+                            className="text-blue-400 hover:text-blue-300 font-bold text-xs flex items-center gap-1"
+                          >
+                            <List className="w-3.5 h-3.5" /> Kelola Soal
+                          </button>
+                        </div>
+
+                        {/* TOMBOL PENUGASAN MATERI */}
+                        <div className="grid grid-cols-3 gap-1.5 pt-1">
+                          <button
+                            onClick={() => handleToggleAssignMaterial(m)}
+                            className={`px-2 py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all ${
+                              isAssigned 
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30' 
+                                : 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-md'
+                            }`}
+                            title={isAssigned ? "Sembunyikan materi dari siswa" : "Tampilkan & tugaskan materi ke siswa"}
+                          >
+                            <Send className="w-3 h-3" />
+                            {isAssigned ? 'Batal Penugasan' : 'Tugaskan'}
+                          </button>
+
+                          <button
+                            onClick={() => { setFilterMaterialGuru(m.id); setFilterClassGuru(m.kelas); setActiveTab('monitor'); }}
+                            className="bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 px-2 py-1.5 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1 transition-all"
+                            title="Ke Pemantauan Realtime Materi Ini"
+                          >
+                            <Radio className="w-3 h-3" />
+                            Pemantauan
+                          </button>
+
+                          <button
+                            onClick={() => { setRekapFilterMaterial(m.id); setRekapFilterClass(m.kelas); setActiveTab('rekap_nilai'); }}
+                            className="bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 px-2 py-1.5 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1 transition-all"
+                            title="Ke Rekap Nilai Materi Ini"
+                          >
+                            <Award className="w-3 h-3" />
+                            Rekap Nilai
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
