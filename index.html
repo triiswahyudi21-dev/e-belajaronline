@@ -208,6 +208,7 @@
 
       const [userAnswers, setUserAnswers] = useState({});
       const [submittedMessage, setSubmittedMessage] = useState(false);
+      const [viewTab, setViewTab] = useState('materi');
 
       useEffect(() => {
         signInAnonymously(auth).catch(() => {});
@@ -464,12 +465,13 @@
         );
       }
 
-      // HANYA TAMPILKAN MATERI YANG DITUGASKAN OLEH GURU (isAssigned === true)
       const filteredMaterialsForStudent = materials.filter(m => 
         String(m.kelas) === String(studentSession.kelas) && 
         (m.mapel === selectedMapel) &&
         (m.isAssigned === true)
       );
+
+      const studentScoresList = scores.filter(s => s.studentId === studentSession.id);
 
       const activeMaterialQuestions = activeMaterial 
         ? questions.filter(q => q.materialId === activeMaterial.id) 
@@ -486,9 +488,22 @@
               <h2 className="font-bold text-white text-sm">{studentSession.name}</h2>
               <p className="text-slate-400 text-xs">Kelas {studentSession.kelas} - {studentSession.subKelas}</p>
             </div>
-            <button onClick={() => setStudentSession(null)} className="text-red-400 hover:text-red-300 text-xs font-semibold flex items-center gap-1 bg-red-500/10 px-3 py-2 rounded-xl border border-red-500/20">
-              <LogOut className="w-3.5 h-3.5"/> Keluar
-            </button>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setViewTab(viewTab === 'materi' ? 'cek_nilai' : 'materi')}
+                className={`text-xs font-bold px-3 py-2 rounded-xl border flex items-center gap-1.5 transition-all ${
+                  viewTab === 'cek_nilai' 
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' 
+                    : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white'
+                }`}
+              >
+                <Award className="w-3.5 h-3.5 text-amber-400" />
+                {viewTab === 'materi' ? 'Cek Nilai Saya' : 'Lihat Materi'}
+              </button>
+              <button onClick={() => setStudentSession(null)} className="text-red-400 hover:text-red-300 text-xs font-semibold flex items-center gap-1 bg-red-500/10 px-3 py-2 rounded-xl border border-red-500/20">
+                <LogOut className="w-3.5 h-3.5"/> Keluar
+              </button>
+            </div>
           </header>
 
           <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -509,7 +524,78 @@
             </div>
           </div>
 
-          {activeMaterial ? (
+          {viewTab === 'cek_nilai' ? (
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                  <Award className="w-5 h-5 text-amber-400"/> Rekap Nilai {studentSession.name} ({selectedMapel})
+                </h3>
+                <button 
+                  onClick={() => setViewTab('materi')}
+                  className="text-xs text-blue-400 hover:underline flex items-center gap-1"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" /> Kembali ke Daftar Materi
+                </button>
+              </div>
+
+              {studentScoresList.filter(s => s.mapel === selectedMapel).length === 0 ? (
+                <div className="p-8 text-center text-slate-500 bg-slate-950 rounded-2xl border border-slate-800 text-xs">
+                  Belum ada riwayat pengerjaan soal untuk mata pelajaran {selectedMapel}.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {studentScoresList.filter(s => s.mapel === selectedMapel).map(sc => (
+                    <div key={sc.id} className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
+                      <div className="flex justify-between items-start gap-2">
+                        <div>
+                          <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded font-bold">{sc.mapel}</span>
+                          <h4 className="font-bold text-white text-sm mt-1">{sc.materialTitle}</h4>
+                        </div>
+                        <div className="text-right">
+                          {sc.score !== null && sc.score !== undefined ? (
+                            <div className="bg-emerald-500/10 border border-emerald-500/30 px-3 py-1 rounded-xl text-center">
+                              <span className="text-[10px] text-slate-400 block font-semibold">Total Nilai</span>
+                              <span className="text-lg font-extrabold text-amber-400">{sc.score}</span>
+                            </div>
+                          ) : (
+                            <div className="bg-amber-500/10 border border-amber-500/30 px-3 py-1 rounded-xl text-center">
+                              <span className="text-[10px] text-amber-400 font-bold block">Perlu Koreksi Manual</span>
+                              <span className="text-[11px] text-slate-300">Menunggu Penilaian Guru</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* RINCIAN PER BUTIR SOAL */}
+                      {sc.userAnswers && (
+                        <div className="pt-3 border-t border-slate-800 space-y-2">
+                          <p className="text-[11px] font-bold text-slate-400">Rincian Jawaban & Nilai Per Soal:</p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            {Object.entries(sc.userAnswers).map(([qId, ansVal], idx) => {
+                              const qObj = questions.find(q => q.id === qId);
+                              const qScore = sc.questionScores ? sc.questionScores[qId] : null;
+
+                              return (
+                                <div key={qId} className="bg-slate-900 p-2.5 rounded-lg border border-slate-800 text-xs space-y-1">
+                                  <div className="flex justify-between items-center text-[11px]">
+                                    <span className="font-bold text-blue-400">Soal {idx + 1} ({qObj ? (qObj.type === 'pg' ? 'Pilihan Ganda' : 'Uraian') : 'Soal'})</span>
+                                    <span className="font-bold text-amber-400">
+                                      Nilai: {qScore !== null && qScore !== undefined ? qScore : (qObj?.type === 'pg' ? '0' : 'Menunggu Koreksi')}
+                                    </span>
+                                  </div>
+                                  <p className="text-slate-300 text-[11px]">Jawaban Anda: <strong className="text-white">{ansVal || '-'}</strong></p>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : activeMaterial ? (
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6">
               <div className="flex justify-between items-center">
                 <button onClick={handleFinishReading} className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
@@ -546,7 +632,7 @@
                     <div>
                       <h4 className="text-xs font-bold text-white">Status Nilai / Hasil Latihan</h4>
                       {activeMaterialScore.score !== null && activeMaterialScore.score !== undefined ? (
-                        <p className="text-xs text-slate-300 mt-0.5">Nilai Anda: <strong className="text-amber-400 text-sm">{activeMaterialScore.score} / 100</strong></p>
+                        <p className="text-xs text-slate-300 mt-0.5">Nilai Anda: <strong className="text-amber-400 text-sm">{activeMaterialScore.score}</strong></p>
                       ) : (
                         <p className="text-xs text-amber-400 mt-0.5 font-semibold">Jawaban telah terkirim. Menunggu penilaian manual dari guru direkap nilai.</p>
                       )}
@@ -760,9 +846,9 @@
                               📌 Ditugaskan
                             </span>
                           </div>
-                          {myScore && myScore.score !== null && myScore.score !== undefined && (
+                          {myScore && (
                             <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-lg font-bold flex items-center gap-1">
-                              Nilai: {myScore.score}
+                              {myScore.score !== null && myScore.score !== undefined ? `Nilai: ${myScore.score}` : 'Menunggu Penilaian'}
                             </span>
                           )}
                         </div>
@@ -1035,9 +1121,9 @@
         );
       };
 
-      // FUNGSI SIMPAN NILAI PER BUTIR SOAL & HITUNG TOTAL OTOMATIS
+      // FUNGSI SIMPAN NILAI PER BUTIR SOAL & HITUNG TOTAL OTOMATIS (PENJUMLAHAN LANGSUNG TANPA DIBAGI)
       const handleSavePerQuestionScore = async (scoreItem, qId, value) => {
-        const numVal = value === '' ? null : Math.min(100, Math.max(0, parseInt(value) || 0));
+        const numVal = value === '' ? null : Math.max(0, parseInt(value) || 0);
         const currentQScores = scoreItem.questionScores || {};
         const updatedQScores = { ...currentQScores, [qId]: numVal };
 
@@ -1052,7 +1138,8 @@
           }
         });
 
-        const calculatedTotal = matQs.length > 0 ? Math.round(totalSum / matQs.length) : 0;
+        // HANYA PENJUMLAHAN TOTAL NILAI, TANPA DIBAGI JUMLAH SOAL
+        const calculatedTotal = totalSum;
         const isAllGraded = matQs.every(q => updatedQScores[q.id] !== undefined && updatedQScores[q.id] !== null);
 
         const updatedScoreObj = {
@@ -2329,12 +2416,11 @@
                                         
                                         {/* INPUT NILAI PER SOAL URAIAN / PG */}
                                         <div className="pt-1.5 flex items-center justify-between gap-2 border-t border-slate-800/80">
-                                          <span className="text-[10px] text-slate-400 font-semibold">Nilai Soal Ini (0-100):</span>
+                                          <span className="text-[10px] text-slate-400 font-semibold">Nilai Soal Ini:</span>
                                           <input 
                                             type="number" 
-                                            min="0" 
-                                            max="100"
-                                            placeholder="0-100" 
+                                            min="0"
+                                            placeholder="Nilai" 
                                             value={currentScoreVal ?? ''}
                                             onChange={(e) => handleSavePerQuestionScore(s, q.id, e.target.value)}
                                             className="w-16 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-amber-300 font-bold text-center focus:border-blue-500 outline-none"
@@ -2361,7 +2447,7 @@
                           <td className="p-4">
                             <div className="flex flex-col items-start gap-1">
                               <span className="font-extrabold text-amber-400 text-sm bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-xl shadow-inner">
-                                {s.score !== null && s.score !== undefined ? `${s.score} / 100` : 'Belum Lengkap'}
+                                {s.score !== null && s.score !== undefined ? s.score : 'Belum Lengkap'}
                               </span>
                               <span className="text-[10px] text-slate-400 font-semibold">
                                 {s.statusGrade === 'graded' ? '✓ Selesai Dinilai' : '⏳ Menunggu Koreksi'}
