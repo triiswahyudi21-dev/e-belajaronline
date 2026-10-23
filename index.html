@@ -1484,18 +1484,31 @@
           return;
         }
 
-        const excelData = filteredScores.map((s, index) => ({
-          'No': index + 1,
-          'Nama Siswa': s.studentName || '-',
-          'Kelas': s.kelas ? `Kelas ${s.kelas}-${s.subKelas}` : '-',
-          'Mata Pelajaran': s.mapel || '-',
-          'Judul Materi': s.materialTitle || '-',
-          'Nilai Akhir': s.score ?? 'Belum Dinilai',
-          'Keterangan': s.score !== null && s.score !== undefined ? (s.score >= 70 ? 'Lulus' : 'Remidial') : 'Perlu Koreksi Manual'
-        }));
+        const excelData = filteredScores.map((s, index) => {
+          const matQs = questions.filter(q => q.materialId === s.materialId);
+          let jawabanText = '-';
+          if (s.userAnswers && Object.keys(s.userAnswers).length > 0) {
+            if (matQs.length > 0) {
+              jawabanText = matQs.map((q, qIdx) => `Soal ${qIdx + 1} (${q.type === 'pg' ? 'PG' : 'Isian'}): ${s.userAnswers[q.id] || '-'}`).join(' | ');
+            } else {
+              jawabanText = Object.entries(s.userAnswers).map(([qId, ans], qIdx) => `Jawaban ${qIdx + 1}: ${ans || '-'}`).join(' | ');
+            }
+          }
+
+          return {
+            'No': index + 1,
+            'Nama Siswa': s.studentName || '-',
+            'Kelas': s.kelas ? `Kelas ${s.kelas}-${s.subKelas}` : '-',
+            'Mata Pelajaran': s.mapel || '-',
+            'Judul Materi': s.materialTitle || '-',
+            'Jawaban Siswa': jawabanText,
+            'Nilai Akhir': s.score ?? 'Belum Dinilai',
+            'Keterangan': s.score !== null && s.score !== undefined ? (s.score >= 70 ? 'Lulus' : 'Remidial') : 'Perlu Koreksi Manual'
+          };
+        });
 
         const worksheet = XLSX.utils.json_to_sheet(excelData);
-        worksheet['!cols'] = [{ wch: 6 }, { wch: 28 }, { wch: 12 }, { wch: 18 }, { wch: 35 }, { wch: 15 }, { wch: 18 }];
+        worksheet['!cols'] = [{ wch: 6 }, { wch: 28 }, { wch: 12 }, { wch: 18 }, { wch: 35 }, { wch: 40 }, { wch: 15 }, { wch: 18 }];
 
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, 'Rekap Nilai');
@@ -2200,56 +2213,95 @@
                       <th className="p-4">Nama Siswa</th>
                       <th className="p-4">Kelas</th>
                       <th className="p-4">Judul Materi</th>
+                      <th className="p-4">Jawaban Siswa / Essai</th>
                       <th className="p-4">Nilai / Penilaian Manual</th>
                       <th className="p-4 text-center">Aksi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800 text-slate-300">
-                    {filteredScores.map((s, idx) => (
-                      <tr key={s.id} className="hover:bg-slate-800/40 transition-colors">
-                        <td className="p-4 text-slate-500 font-mono">{idx + 1}</td>
-                        <td className="p-4 font-bold text-white">{s.studentName}</td>
-                        <td className="p-4">Kelas {s.kelas}-{s.subKelas}</td>
-                        <td className="p-4">{s.materialTitle}</td>
-                        <td className="p-4">
-                          {s.score !== null && s.score !== undefined ? (
-                            <span className="font-extrabold text-amber-400 text-sm bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-lg">
-                              {s.score} / 100
-                            </span>
-                          ) : (
-                            <div className="flex items-center gap-2">
-                              <input 
-                                type="number" 
-                                min="0" 
-                                max="100"
-                                placeholder="0-100" 
-                                value={manualScoresInput[s.id] ?? ''}
-                                onChange={(e) => setManualScoresInput(prev => ({ ...prev, [s.id]: e.target.value }))}
-                                className="w-20 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:border-blue-500 outline-none font-bold"
-                              />
-                              <button 
-                                onClick={() => handleSaveManualScore(s)}
-                                className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 text-xs shadow-md"
-                              >
-                                <Save className="w-3.5 h-3.5" /> Simpan
-                              </button>
-                            </div>
-                          )}
-                        </td>
-                        <td className="p-4 text-center">
-                          <button 
-                            onClick={() => handleDeleteScore(s.id)}
-                            className="text-red-400 hover:text-red-300 p-1.5 bg-red-500/10 rounded-lg border border-red-500/20"
-                            title="Hapus Nilai Siswa"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {filteredScores.map((s, idx) => {
+                      const matQs = questions.filter(q => q.materialId === s.materialId);
+                      return (
+                        <tr key={s.id} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="p-4 text-slate-500 font-mono">{idx + 1}</td>
+                          <td className="p-4 font-bold text-white">{s.studentName}</td>
+                          <td className="p-4">Kelas {s.kelas}-{s.subKelas}</td>
+                          <td className="p-4">{s.materialTitle}</td>
+                          <td className="p-4">
+                            {s.userAnswers && Object.keys(s.userAnswers).length > 0 ? (
+                              <div className="space-y-1.5 max-w-xs">
+                                {matQs.length > 0 ? (
+                                  matQs.map((q, qIdx) => {
+                                    const ans = s.userAnswers[q.id];
+                                    return (
+                                      <div key={q.id || qIdx} className="bg-slate-950/70 p-2 rounded-lg border border-slate-800 text-[11px]">
+                                        <div className="flex items-center justify-between gap-1 mb-1">
+                                          <span className="font-bold text-blue-400">Soal {qIdx + 1} ({q.type === 'pg' ? 'PG' : 'Isian/Essai'})</span>
+                                          {q.type === 'pg' && (
+                                            <span className="text-[10px] text-slate-400">Kunci: {q.correctAnswer}</span>
+                                          )}
+                                        </div>
+                                        <div className="text-slate-200">
+                                          <RenderMathText text={ans || '(Belum dijawab)'} />
+                                        </div>
+                                      </div>
+                                    );
+                                  })
+                                ) : (
+                                  Object.entries(s.userAnswers).map(([qId, ans], qIdx) => (
+                                    <div key={qId} className="bg-slate-950/70 p-2 rounded-lg border border-slate-800 text-[11px]">
+                                      <span className="font-bold text-blue-400">Jawaban {qIdx + 1}:</span>
+                                      <div className="text-slate-200">
+                                        <RenderMathText text={ans || '(Belum dijawab)'} />
+                                      </div>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-slate-500 italic">-</span>
+                            )}
+                          </td>
+                          <td className="p-4">
+                            {s.score !== null && s.score !== undefined ? (
+                              <span className="font-extrabold text-amber-400 text-sm bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-lg">
+                                {s.score} / 100
+                              </span>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <input 
+                                  type="number" 
+                                  min="0" 
+                                  max="100"
+                                  placeholder="0-100" 
+                                  value={manualScoresInput[s.id] ?? ''}
+                                  onChange={(e) => setManualScoresInput(prev => ({ ...prev, [s.id]: e.target.value }))}
+                                  className="w-20 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:border-blue-500 outline-none font-bold"
+                                />
+                                <button 
+                                  onClick={() => handleSaveManualScore(s)}
+                                  className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 text-xs shadow-md"
+                                >
+                                  <Save className="w-3.5 h-3.5" /> Simpan
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                          <td className="p-4 text-center">
+                            <button 
+                              onClick={() => handleDeleteScore(s.id)}
+                              className="text-red-400 hover:text-red-300 p-1.5 bg-red-500/10 rounded-lg border border-red-500/20"
+                              title="Hapus Nilai Siswa"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                     {filteredScores.length === 0 && (
                       <tr>
-                        <td colSpan="6" className="p-8 text-center text-slate-500 italic">
+                        <td colSpan="7" className="p-8 text-center text-slate-500 italic">
                           Belum ada rekap nilai yang tersimpan untuk filter kelas ini.
                         </td>
                       </tr>
